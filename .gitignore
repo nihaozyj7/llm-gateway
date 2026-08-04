@@ -1,6 +1,7 @@
 # Go
 *.exe
 *.exe~
+*.bak
 gateway
 gateway-linux
 

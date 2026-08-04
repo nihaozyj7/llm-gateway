@@ -21,21 +21,23 @@ type Channel struct {
 
 // Model 聚合模型(同名全局唯一)
 type Model struct {
-	ID          int64     `json:"id"`
-	ModelID     string    `json:"model_id"` // 如 gpt-4o
-	DisplayName string    `json:"display_name"`
-	PriceInput  *float64  `json:"price_input"`  // 元/千 token,可空
-	PriceOutput *float64  `json:"price_output"` // 元/千 token,可空
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	ModelID        string    `json:"model_id"` // 如 gpt-4o
+	DisplayName    string    `json:"display_name"`
+	PriceInput     *float64  `json:"price_input"`     // 元/百万 token,可空
+	PriceOutput    *float64  `json:"price_output"`    // 元/百万 token,可空
+	PriceCacheRead *float64  `json:"price_cache_read"` // 缓存读取价,元/百万 token,可空
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// ChannelModel 渠道-模型关联(含渠道内模型名映射)
+// ChannelModel 渠道-模型关联(含渠道内模型名映射与模型级优先级)
 type ChannelModel struct {
 	ID                int64     `json:"id"`
 	ChannelID         int64     `json:"channel_id"`
 	ModelID           int64     `json:"model_id"`
 	UpstreamModelName string    `json:"upstream_model_name"` // 空=同名透传
+	Priority          int       `json:"priority"`           // 模型级优先级,越小越优先;默认继承渠道全局优先级
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -44,7 +46,8 @@ type APIKey struct {
 	ID         int64     `json:"id"`
 	Name       string    `json:"name"`
 	KeyHash    string    `json:"-"`
-	KeyPrefix  string    `json:"key_prefix"` // 明文前缀 8 位用于展示
+	KeyPrefix  string    `json:"key_prefix"`  // 明文前缀 8 位用于展示
+	KeySecret  string    `json:"key_secret"`  // 完整密钥明文(本地自用,允许随时查看/复制)
 	Enabled    bool      `json:"enabled"`
 	UsageCount int64     `json:"usage_count"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -72,6 +75,7 @@ type RequestLog struct {
 	PromptTokens     int64     `json:"prompt_tokens"`
 	CompletionTokens int64     `json:"completion_tokens"`
 	TotalTokens      int64     `json:"total_tokens"`
+	CacheReadTokens  int64     `json:"cache_read_tokens"` // prompt 中命中缓存的部分(成本按缓存价计)
 	Cost             float64   `json:"cost"`
 	Error            string    `json:"error"`
 	SourceIP         string    `json:"source_ip"`

@@ -7,12 +7,12 @@ import (
 	"gateway/internal/model"
 )
 
-const apiKeyCols = "id, name, key_hash, key_prefix, enabled, usage_count, created_at, last_used_at"
+const apiKeyCols = "id, name, key_hash, key_prefix, key_secret, enabled, usage_count, created_at, last_used_at"
 
 func scanAPIKey(row interface{ Scan(...any) error }) (*model.APIKey, error) {
 	var k model.APIKey
 	var enabled, createdAt, lastUsed int64
-	err := row.Scan(&k.ID, &k.Name, &k.KeyHash, &k.KeyPrefix, &enabled, &k.UsageCount, &createdAt, &lastUsed)
+	err := row.Scan(&k.ID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.KeySecret, &enabled, &k.UsageCount, &createdAt, &lastUsed)
 	if err != nil {
 		return nil, err
 	}
@@ -41,9 +41,9 @@ func (s *Store) ListAPIKeys() ([]*model.APIKey, error) {
 }
 
 // CreateAPIKey 创建密钥
-func (s *Store) CreateAPIKey(name, hash, prefix string) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO api_keys (name, key_hash, key_prefix, enabled, usage_count, created_at) VALUES (?, ?, ?, 1, 0, ?)`,
-		name, hash, prefix, ts(time.Now()))
+func (s *Store) CreateAPIKey(name, hash, prefix, secret string) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO api_keys (name, key_hash, key_prefix, key_secret, enabled, usage_count, created_at) VALUES (?, ?, ?, ?, 1, 0, ?)`,
+		name, hash, prefix, secret, ts(time.Now()))
 	if err != nil {
 		return 0, err
 	}

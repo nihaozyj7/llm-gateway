@@ -95,7 +95,9 @@
                 <div class="flex gap-2 font-mono text-xs items-center">
                   <span class="text-[#a3a3a3]">{{ masked(k.key_prefix) }}</span>
                   <span class="text-white">{{ tail(k.key_prefix) }}</span>
-                  <Icon icon="lucide:copy" class="cursor-pointer text-[#737373] hover:text-white" @click="copy(k.key_prefix)" />
+                  <button @click="copy(k.key_secret)" title="复制完整密钥" class="p-1.5 hover:bg-[#262626] rounded text-[#737373] hover:text-white">
+                    <Icon icon="lucide:copy" class="text-sm" />
+                  </button>
                 </div>
               </td>
               <td class="px-6 py-4 text-xs font-mono text-[#737373]">{{ fmtTime(k.created_at) }}</td>
@@ -149,10 +151,9 @@
           <h3 class="text-lg font-bold uppercase tracking-wider">密钥创建成功</h3>
           <button @click="createdKey = null" class="text-[#737373] hover:text-white"><Icon icon="lucide:x" /></button>
         </div>
-        <p class="text-xs text-amber-500 mb-3">请立即保存!明文密钥仅显示这一次。</p>
         <div class="json-block select-all">{{ createdKey }}</div>
         <div class="flex gap-4 pt-6">
-          <button @click="copy(createdKey)" class="flex-1 py-3 text-sm font-bold rounded btn-outline">复制</button>
+          <button @click="copy(createdKey)" class="flex-1 py-3 text-sm font-bold rounded btn-outline">{{ copied ? '已复制 ✓' : '复制密钥' }}</button>
           <button @click="createdKey = null" class="flex-1 py-3 text-sm font-bold rounded btn-primary">我已保存</button>
         </div>
       </div>
@@ -170,6 +171,8 @@ const keys = ref([])
 const showModal = ref(false)
 const createdKey = ref(null)
 const name = ref('')
+const copied = ref(false)
+let copyTimer = null
 
 // 客户端接入指南:base URL 取自当前页面地址(管理界面与 /v1 同源)
 const baseUrl = computed(() => `${window.location.origin}/v1`)
@@ -200,7 +203,16 @@ function relative(t) {
   return `${Math.floor(d / 30)} 月前`
 }
 async function copy(text) {
-  try { await navigator.clipboard.writeText(text || '') } catch { alert('复制失败') }
+  if (!text) {
+    alert('该密钥为旧版本创建,没有保存明文,请删除后重新创建')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    copied.value = true
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => (copied.value = false), 2000)
+  } catch { alert('复制失败') }
 }
 function openCreate() {
   name.value = ''

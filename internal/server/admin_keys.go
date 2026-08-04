@@ -37,7 +37,7 @@ func (h *AdminHandler) handleKeys(w http.ResponseWriter, r *http.Request) {
 		secret := keyPrefix + generateSecret()
 		hash := hashKey(secret)
 		prefix := keyPrefix + secret[len(keyPrefix):len(keyPrefix)+8]
-		id, err := h.store.CreateAPIKey(req.Name, hash, prefix)
+		id, err := h.store.CreateAPIKey(req.Name, hash, prefix, secret)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return

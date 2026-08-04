@@ -2,6 +2,7 @@ package route
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"testing"
 )
@@ -86,14 +87,30 @@ func TestParseStreamUsage(t *testing.T) {
 }
 
 func TestCost(t *testing.T) {
-	pIn := 0.03
-	pOut := 0.06
-	got := Cost(1000, 500, &pIn, &pOut)
-	// 1000/1000*0.03 + 500/1000*0.06 = 0.03 + 0.03
-	if got != 0.06 {
-		t.Errorf("Cost = %v, want 0.06", got)
+	pIn := 3.0    // 元/百万 token
+	pOut := 6.0   // 元/百万 token
+	pCache := 0.5 // 元/百万 token
+	got := Cost(1_000_000, 0, 500_000, &pIn, &pCache, &pOut)
+	// 1e6/1e6*3 + 5e5/1e6*6 = 3 + 3
+	if got != 6.0 {
+		t.Errorf("Cost = %v, want 6", got)
 	}
-	if Cost(1000, 500, nil, nil) != 0 {
+	// 缓存:100 万输入中 40 万命中缓存 → 60万*3/1e6 + 40万*0.5/1e6 = 1.8 + 0.2
+	got = Cost(1_000_000, 400_000, 0, &pIn, &pCache, nil)
+	if math.Abs(got-2.0) > 1e-9 {
+		t.Errorf("Cost cached = %v, want 2.0", got)
+	}
+	// 未配置缓存单价:缓存部分按输入价计 = 全部输入按输入价
+	got = Cost(1_000_000, 400_000, 0, &pIn, nil, nil)
+	if got != 3.0 {
+		t.Errorf("Cost nil cache = %v, want 3.0", got)
+	}
+	// 缓存超出输入:按输入量截断
+	got = Cost(1_000_000, 2_000_000, 0, &pIn, &pCache, nil)
+	if got != 0.5 {
+		t.Errorf("Cost cache clamp = %v, want 0.5", got)
+	}
+	if Cost(1_000_000, 0, 500_000, nil, nil, nil) != 0 {
 		t.Error("nil prices should cost 0")
 	}
 }

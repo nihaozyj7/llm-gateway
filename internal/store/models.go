@@ -2,18 +2,19 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"gateway/internal/model"
 )
 
-const modelCols = "id, model_id, display_name, price_input, price_output, created_at, updated_at"
+const modelCols = "id, model_id, display_name, price_input, price_output, price_cache_read, created_at, updated_at"
 
 func scanModel(row interface{ Scan(...any) error }) (*model.Model, error) {
 	var m model.Model
 	var createdAt, updatedAt int64
-	var pi, po sql.NullFloat64
-	err := row.Scan(&m.ID, &m.ModelID, &m.DisplayName, &pi, &po, &createdAt, &updatedAt)
+	var pi, po, pc sql.NullFloat64
+	err := row.Scan(&m.ID, &m.ModelID, &m.DisplayName, &pi, &po, &pc, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -24,6 +25,10 @@ func scanModel(row interface{ Scan(...any) error }) (*model.Model, error) {
 	if po.Valid {
 		v := po.Float64
 		m.PriceOutput = &v
+	}
+	if pc.Valid {
+		v := pc.Float64
+		m.PriceCacheRead = &v
 	}
 	m.CreatedAt = fromTS(createdAt)
 	m.UpdatedAt = fromTS(updatedAt)
@@ -84,10 +89,10 @@ func (s *Store) UpsertModel(modelID, displayName string) (int64, error) {
 	return m.ID, nil
 }
 
-// UpdateModelPrice 更新模型价格(元/千 token;nil 表示清除)
-func (s *Store) UpdateModelPrice(id int64, priceInput, priceOutput *float64) error {
-	_, err := s.db.Exec("UPDATE models SET price_input=?, price_output=?, updated_at=? WHERE id=?",
-		nullableFloat(priceInput), nullableFloat(priceOutput), ts(time.Now()), id)
+// UpdateModelPrice 更新模型价格(元/百万 token;nil 表示清除)
+func (s *Store) UpdateModelPrice(id int64, priceInput, priceOutput, priceCacheRead *float64) error {
+	_, err := s.db.Exec("UPDATE models SET price_input=?, price_output=?, price_cache_read=?, updated_at=? WHERE id=?",
+		nullableFloat(priceInput), nullableFloat(priceOutput), nullableFloat(priceCacheRead), ts(time.Now()), id)
 	return err
 }
 
@@ -106,10 +111,11 @@ func nullableFloat(v *float64) any {
 
 // ---- Channel-Model 关联 ----
 
-// AddChannelModel 关联渠道与模型(含上游模型名映射)
+// AddChannelModel 关联渠道与模型(含上游模型名映射;priority=0 表示继承渠道全局优先级)
 func (s *Store) AddChannelModel(channelID, modelID int64, upstreamName string) error {
-	_, err := s.db.Exec(`INSERT INTO channel_models (channel_id, model_id, upstream_model_name, created_at)
-		VALUES (?, ?, ?, ?) ON CONFLICT(channel_id, model_id) DO UPDATE SET upstream_model_name=excluded.upstream_model_name`,
+	_, err := s.db.Exec(`INSERT INTO channel_models (channel_id, model_id, upstream_model_name, priority, created_at)
+		VALUES (?, ?, ?, 0, ?)
+		ON CONFLICT(channel_id, model_id) DO UPDATE SET upstream_model_name=excluded.upstream_model_name`,
 		channelID, modelID, upstreamName, ts(time.Now()))
 	return err
 }
@@ -147,26 +153,32 @@ type ModelWithChannels struct {
 }
 
 // ChannelRef 模型在某渠道上的引用
+// Priority 为实际生效优先级(模型级自定义 >0 时取自定义,否则继承渠道全局);
+// ModelPriority 为模型级原始值,0 = 继承渠道全局优先级(前端可提示)。
 type ChannelRef struct {
 	ChannelID         int64  `json:"channel_id"`
 	ChannelName       string `json:"channel_name"`
 	Priority          int    `json:"priority"`
+	ModelPriority     int    `json:"model_priority"`
 	Enabled           bool   `json:"enabled"`
 	Status            string `json:"status"`
 	UpstreamModelName string `json:"upstream_model_name"`
 }
 
-// ListModelsWithChannels 聚合模型 + 渠道引用(路由候选来源)
+// ListModelsWithChannels 聚合模型 + 渠道引用(路由候选来源)。
+// 模型级优先级:>0 为拖拽自定义;0 表示继承渠道全局优先级。
 func (s *Store) ListModelsWithChannels() ([]*ModelWithChannels, error) {
 	models, err := s.ListModels()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT cm.model_id, c.id, c.name, c.priority, c.enabled, c.status, cm.upstream_model_name
+	rows, err := s.db.Query(`SELECT cm.model_id, c.id, c.name,
+		CASE WHEN cm.priority > 0 THEN cm.priority ELSE c.priority END AS eff_priority,
+		cm.priority, c.enabled, c.status, cm.upstream_model_name
 		FROM channel_models cm
 		JOIN channels c ON c.id = cm.channel_id
 		JOIN models m ON m.id = cm.model_id
-		ORDER BY c.priority ASC, c.id ASC`)
+		ORDER BY eff_priority ASC, c.id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +188,7 @@ func (s *Store) ListModelsWithChannels() ([]*ModelWithChannels, error) {
 		var modelPK int64
 		var r ChannelRef
 		var enabled int
-		if err := rows.Scan(&modelPK, &r.ChannelID, &r.ChannelName, &r.Priority, &enabled, &r.Status, &r.UpstreamModelName); err != nil {
+		if err := rows.Scan(&modelPK, &r.ChannelID, &r.ChannelName, &r.Priority, &r.ModelPriority, &enabled, &r.Status, &r.UpstreamModelName); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled == 1
@@ -191,6 +203,36 @@ func (s *Store) ListModelsWithChannels() ([]*ModelWithChannels, error) {
 		out = append(out, &ModelWithChannels{Model: m, Channels: ch})
 	}
 	return out, rows.Err()
+}
+
+// ReorderModelChannels 批量更新某模型关联渠道的模型级优先级(拖拽排序保存)。
+// 仅影响该模型的调用顺序,不修改渠道全局优先级。
+func (s *Store) ReorderModelChannels(modelID int64, items []ChannelPriority) error {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(items))
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, it := range items {
+		if it.ID <= 0 {
+			return fmt.Errorf("invalid channel id %d", it.ID)
+		}
+		if it.Priority < 1 {
+			return fmt.Errorf("priority 必须 >= 1(渠道 %d)", it.ID)
+		}
+		if _, dup := seen[it.ID]; dup {
+			return fmt.Errorf("重复的渠道 id %d", it.ID)
+		}
+		seen[it.ID] = struct{}{}
+		if _, err := tx.Exec("UPDATE channel_models SET priority=? WHERE channel_id=? AND model_id=?", it.Priority, it.ID, modelID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // GetModelWithChannels 取单个模型 + 渠道引用

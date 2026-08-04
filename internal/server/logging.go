@@ -20,12 +20,13 @@ type storeLogEntry struct {
 }
 
 // writeLog 落库日志 + 更新统计,并按模型价格计算成本
-func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs int64, respBody []byte, pt, ct, tt int64, httpStatus int) {
+// pt/ct/cache/tt 分别为 prompt/completion/缓存读取/total tokens;价格为元/百万 token
+func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs int64, respBody []byte, pt, ct, cache, tt int64, httpStatus int) {
 	// 计算成本:按模型价格
 	var cost float64
 	m, _ := h.store.GetModelByID(e.Model)
 	if m != nil {
-		cost = route.Cost(pt, ct, m.PriceInput, m.PriceOutput)
+		cost = route.Cost(pt, cache, ct, m.PriceInput, m.PriceCacheRead, m.PriceOutput)
 	}
 	payloadResp := ""
 	if h.cfg.LogPayloads && respBody != nil && len(respBody) < 64*1024 {
@@ -45,6 +46,7 @@ func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs i
 		PromptTokens:     pt,
 		CompletionTokens: ct,
 		TotalTokens:      tt,
+		CacheReadTokens:  cache,
 		Cost:             cost,
 		Error:            e.Error,
 		SourceIP:         e.SourceIP,

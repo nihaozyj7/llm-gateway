@@ -107,8 +107,7 @@ type Summary struct {
 }
 
 // Summarize 汇总指定时间段(periodPrefix 为空=全部)
-func (s *Store) Summarize(table, periodPrefix string) (*Summary, error) {
-	where := ""
+func (s *Store) Summarize(table, periodPrefix string) (*Summary, error) {	where := ""
 	args := []any{}
 	if periodPrefix != "" {
 		where = "WHERE period LIKE ?"
@@ -122,6 +121,15 @@ func (s *Store) Summarize(table, periodPrefix string) (*Summary, error) {
 		return &sum, nil
 	}
 	return &sum, err
+}
+
+// ResetStats 清空统计聚合表(不删请求日志;供概览「重置」按钮使用)
+func (s *Store) ResetStats() error {
+	if _, err := s.db.Exec("DELETE FROM stat_daily"); err != nil {
+		return err
+	}
+	_, err := s.db.Exec("DELETE FROM stat_hourly")
+	return err
 }
 
 // _ 占位:防止未使用导入

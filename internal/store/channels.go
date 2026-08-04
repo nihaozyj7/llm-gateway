@@ -73,6 +73,42 @@ func (s *Store) UpdateChannel(c *model.Channel) error {
 	return err
 }
 
+// ChannelPriority 优先级批量调整项
+type ChannelPriority struct {
+	ID       int64 `json:"id"`
+	Priority int   `json:"priority"`
+}
+
+// ReorderChannels 批量更新渠道优先级(拖拽排序保存)。
+// 要求:priority >= 1,items 内不允许重复渠道 ID。
+func (s *Store) ReorderChannels(items []ChannelPriority) error {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(items))
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, it := range items {
+		if it.ID <= 0 {
+			return fmt.Errorf("invalid channel id %d", it.ID)
+		}
+		if it.Priority < 1 {
+			return fmt.Errorf("priority 必须 >= 1(渠道 %d)", it.ID)
+		}
+		if _, dup := seen[it.ID]; dup {
+			return fmt.Errorf("重复的渠道 id %d", it.ID)
+		}
+		seen[it.ID] = struct{}{}
+		if _, err := tx.Exec("UPDATE channels SET priority=?, updated_at=? WHERE id=?", it.Priority, ts(time.Now()), it.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // DeleteChannel 删除渠道(级联删除 channel_models)
 func (s *Store) DeleteChannel(id int64) error {
 	_, err := s.db.Exec("DELETE FROM channels WHERE id = ?", id)

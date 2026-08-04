@@ -54,6 +54,7 @@ func (s *Store) migrate() error {
 			display_name TEXT NOT NULL DEFAULT '',
 			price_input REAL,
 			price_output REAL,
+			price_cache_read REAL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
@@ -62,6 +63,7 @@ func (s *Store) migrate() error {
 			channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
 			model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
 			upstream_model_name TEXT NOT NULL DEFAULT '',
+			priority INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			UNIQUE(channel_id, model_id)
 		)`,
@@ -72,6 +74,7 @@ func (s *Store) migrate() error {
 			name TEXT NOT NULL,
 			key_hash TEXT NOT NULL UNIQUE,
 			key_prefix TEXT NOT NULL DEFAULT '',
+			key_secret TEXT NOT NULL DEFAULT '',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			usage_count INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
@@ -95,6 +98,7 @@ func (s *Store) migrate() error {
 			prompt_tokens INTEGER NOT NULL DEFAULT 0,
 			completion_tokens INTEGER NOT NULL DEFAULT 0,
 			total_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 			cost REAL NOT NULL DEFAULT 0,
 			error TEXT NOT NULL DEFAULT '',
 			source_ip TEXT NOT NULL DEFAULT '',
@@ -142,7 +146,80 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
-	return nil
+	// 旧库迁移:api_keys 补充 key_secret 列(明文密钥,本地自用可随时查看)
+	if err := ensureColumn(s.db, "api_keys", "key_secret", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	return s.migrateV1()
+}
+
+// migrateV1 一次性迁移(以 PRAGMA user_version 幂等标记,全部包在单个事务内保证原子性):
+//  1. models 增加缓存读取单价(price_cache_read);
+//  2. request_logs 增加 cache_read_tokens;
+//  3. channel_models 增加模型级优先级 priority(0 = 继承渠道全局优先级,可拖拽单独调整);
+//  4. 价格单位从「元/千 token」切换为「元/百万 token」,存量价格 ×1000 保持成本等价。
+func (s *Store) migrateV1() error {
+	var v int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	if v >= 1 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	defer tx.Rollback()
+	if err := ensureColumn(tx, "models", "price_cache_read", "REAL"); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	if err := ensureColumn(tx, "request_logs", "cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	if err := ensureColumn(tx, "channel_models", "priority", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	// 价格单位切换:元/千 → 元/百万(×1000,成本公式同步改为除以 1e6,结果等价)
+	if _, err := tx.Exec("UPDATE models SET price_input = price_input * 1000 WHERE price_input IS NOT NULL"); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	if _, err := tx.Exec("UPDATE models SET price_output = price_output * 1000 WHERE price_output IS NOT NULL"); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+		return fmt.Errorf("migrate v1: %w", err)
+	}
+	return tx.Commit()
+}
+
+// sqlExecer DB 与事务共有的执行接口(用于迁移内统一执行)
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// ensureColumn 检查列是否存在,不存在则 ALTER TABLE 添加
+func ensureColumn(db sqlExecer, table, column, ddl string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + ddl)
+	return err
 }
 
 // Close 关闭数据库

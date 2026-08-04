@@ -33,6 +33,8 @@ type Config struct {
 	SessionSecret string `json:"session_secret"`
 	// LogPayloads 是否记录请求/响应体
 	LogPayloads bool `json:"log_payloads"`
+	// OpenBrowser 启动后是否自动打开浏览器管理界面
+	OpenBrowser bool `json:"open_browser"`
 }
 
 // Default 返回默认配置
@@ -49,6 +51,7 @@ func Default() *Config {
 		MaxAttemptsPerRequest: 0,
 		RetrySameChannel:      true,
 		LogPayloads:           true,
+		OpenBrowser:           true,
 	}
 }
 

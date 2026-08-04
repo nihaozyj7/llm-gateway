@@ -32,6 +32,7 @@ type Usage struct {
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
 	TotalTokens      int64 `json:"total_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"` // prompt_tokens_details.cached_tokens(命中缓存部分)
 }
 
 // Router 路由决策器
@@ -238,6 +239,9 @@ func parseUsage(body []byte) *Usage {
 			PromptTokens     int64 `json:"prompt_tokens"`
 			CompletionTokens int64 `json:"completion_tokens"`
 			TotalTokens      int64 `json:"total_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -250,6 +254,7 @@ func parseUsage(body []byte) *Usage {
 		PromptTokens:     payload.Usage.PromptTokens,
 		CompletionTokens: payload.Usage.CompletionTokens,
 		TotalTokens:      payload.Usage.TotalTokens,
+		CacheReadTokens:  payload.Usage.PromptTokensDetails.CachedTokens,
 	}
 	if u.TotalTokens == 0 {
 		u.TotalTokens = u.PromptTokens + u.CompletionTokens
@@ -328,14 +333,29 @@ func (r *Router) markChannelFail(channelID int64, res *Result) {
 	}
 }
 
-// Cost 计算成本:元 = tokens/1000 * 单价
-func Cost(inputTokens, outputTokens int64, priceIn, priceOut *float64) float64 {
+// Cost 计算成本(单位:元;价格为元/百万 token)。
+// 命中缓存的部分按缓存单价计,其余输入按输入单价计,输出按输出单价计;
+// 未配置缓存单价时缓存部分按输入单价计;cacheTokens 超过输入时按输入量截断。
+func Cost(inputTokens, cacheTokens, outputTokens int64, priceIn, priceCache, priceOut *float64) float64 {
+	if cacheTokens < 0 {
+		cacheTokens = 0
+	}
+	if cacheTokens > inputTokens {
+		cacheTokens = inputTokens
+	}
 	var cost float64
 	if priceIn != nil {
-		cost += float64(inputTokens) / 1000 * *priceIn
+		cost += float64(inputTokens-cacheTokens) / 1e6 * *priceIn
+	}
+	cachePrice := priceCache
+	if cachePrice == nil {
+		cachePrice = priceIn
+	}
+	if cachePrice != nil && cacheTokens > 0 {
+		cost += float64(cacheTokens) / 1e6 * *cachePrice
 	}
 	if priceOut != nil {
-		cost += float64(outputTokens) / 1000 * *priceOut
+		cost += float64(outputTokens) / 1e6 * *priceOut
 	}
 	return cost
 }

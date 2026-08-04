@@ -124,6 +124,9 @@ func parseStreamUsage(dataLine string) *Usage {
 			PromptTokens     int64 `json:"prompt_tokens"`
 			CompletionTokens int64 `json:"completion_tokens"`
 			TotalTokens      int64 `json:"total_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
@@ -136,6 +139,7 @@ func parseStreamUsage(dataLine string) *Usage {
 		PromptTokens:     chunk.Usage.PromptTokens,
 		CompletionTokens: chunk.Usage.CompletionTokens,
 		TotalTokens:      chunk.Usage.TotalTokens,
+		CacheReadTokens:  chunk.Usage.PromptTokensDetails.CachedTokens,
 	}
 	if u.TotalTokens == 0 {
 		u.TotalTokens = u.PromptTokens + u.CompletionTokens

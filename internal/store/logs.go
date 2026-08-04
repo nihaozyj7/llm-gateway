@@ -7,15 +7,15 @@ import (
 	"gateway/internal/model"
 )
 
-const logCols = "id, request_time, request_id, channel_id, channel_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cost, error, source_ip, payload_request, payload_response"
+const logCols = "id, request_time, request_id, channel_id, channel_name, model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, payload_request, payload_response"
 
 // InsertLog 插入一条请求日志
 func (s *Store) InsertLog(l *model.RequestLog) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO request_logs (request_time, request_id, channel_id, channel_name, model, status, latency_ms,
-		prompt_tokens, completion_tokens, total_tokens, cost, error, source_ip, payload_request, payload_response)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, payload_request, payload_response)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts(l.RequestTime), l.RequestID, l.ChannelID, l.ChannelName, l.Model, l.Status, l.LatencyMs,
-		l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.Cost, l.Error, l.SourceIP,
+		l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.CacheReadTokens, l.Cost, l.Error, l.SourceIP,
 		l.PayloadRequest, l.PayloadResponse)
 	if err != nil {
 		return 0, err
@@ -80,7 +80,7 @@ func scanLog(row interface{ Scan(...any) error }) (*model.RequestLog, error) {
 	var l model.RequestLog
 	var rt int64
 	err := row.Scan(&l.ID, &rt, &l.RequestID, &l.ChannelID, &l.ChannelName, &l.Model, &l.Status,
-		&l.LatencyMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.Cost, &l.Error, &l.SourceIP,
+		&l.LatencyMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.CacheReadTokens, &l.Cost, &l.Error, &l.SourceIP,
 		&l.PayloadRequest, &l.PayloadResponse)
 	if err != nil {
 		return nil, err

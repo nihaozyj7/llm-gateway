@@ -23,6 +23,7 @@ export const api = {
   createChannel: (c) => req('/api/admin/channels', { method: 'POST', body: JSON.stringify(c) }),
   updateChannel: (id, c) => req(`/api/admin/channels/${id}`, { method: 'PUT', body: JSON.stringify(c) }),
   deleteChannel: (id) => req(`/api/admin/channels/${id}`, { method: 'DELETE' }),
+  reorderChannels: (items) => req('/api/admin/channels/reorder', { method: 'POST', body: JSON.stringify({ items }) }),
   testChannel: (id) => req(`/api/admin/test?channel_id=${id}`, { method: 'POST' }),
   recoverChannel: (id) => req(`/api/admin/channels/${id}/recover`, { method: 'POST' }),
 
@@ -30,10 +31,12 @@ export const api = {
   listModels: () => req('/api/admin/models'),
   createModel: (model_id, display_name) => req('/api/admin/models', { method: 'POST', body: JSON.stringify({ model_id, display_name }) }),
   deleteModel: (id) => req(`/api/admin/models/${id}`, { method: 'DELETE' }),
-  updatePrice: (id, price_input, price_output) => req(`/api/admin/models/${id}/price`, { method: 'PUT', body: JSON.stringify({ price_input, price_output }) }),
+  updatePrice: (id, price_input, price_output, price_cache_read) => req(`/api/admin/models/${id}/price`, { method: 'PUT', body: JSON.stringify({ price_input, price_output, price_cache_read }) }),
   syncChannelModels: (channel_id) => req('/api/admin/models/sync', { method: 'POST', body: JSON.stringify({ channel_id }) }),
+  reorderModelChannels: (modelId, items) => req(`/api/admin/models/${modelId}/reorder`, { method: 'POST', body: JSON.stringify({ items }) }),
   linkChannel: (modelId, channel_id, upstream_model_name) => req(`/api/admin/models/${modelId}/channels`, { method: 'POST', body: JSON.stringify({ channel_id, upstream_model_name }) }),
   unlinkChannel: (modelId, channel_id) => req(`/api/admin/models/${modelId}/channels`, { method: 'DELETE', body: JSON.stringify({ channel_id }) }),
+  testModel: (model_id, signal) => req('/api/admin/models/test', { method: 'POST', body: JSON.stringify({ model_id }), signal }),
 
   // API Keys
   listKeys: () => req('/api/admin/keys'),
@@ -55,6 +58,7 @@ export const api = {
     return req(`/api/admin/stats?${qs}`)
   },
   dashboard: () => req('/api/admin/dashboard'),
+  resetStats: () => req('/api/admin/stats/reset', { method: 'POST' }),
 }
 
 export function fmtTime(t) {

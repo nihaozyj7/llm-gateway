@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gateway/internal/model"
+	"gateway/internal/store"
 )
 
 // maskKey 遮罩 API key:保留前4后4
@@ -134,6 +135,31 @@ func (h *AdminHandler) handleChannelByID(w http.ResponseWriter, r *http.Request)
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 	}
+}
+
+// POST /api/admin/channels/reorder — 批量调整渠道优先级(拖拽排序保存)
+func (h *AdminHandler) handleChannelsReorder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Items []store.ChannelPriority `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		return
+	}
+	if len(req.Items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "items 不能为空"})
+		return
+	}
+	if err := h.store.ReorderChannels(req.Items); err != nil {
+		// 批量排序失败多为参数校验问题,统一返回 400
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleTestChannel HTTP 包装:POST /api/admin/test?channel_id=

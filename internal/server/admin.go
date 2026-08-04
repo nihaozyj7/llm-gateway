@@ -25,14 +25,17 @@ func NewAdminHandler(st *store.Store, cfg *config.Config) *AdminHandler {
 func (h *AdminHandler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/channels", h.requireLocal(h.handleChannels))
 	mux.HandleFunc("/api/admin/channels/", h.requireLocal(h.handleChannelByID))
+	mux.HandleFunc("/api/admin/channels/reorder", h.requireLocal(h.handleChannelsReorder))
 	mux.HandleFunc("/api/admin/models", h.requireLocal(h.handleModels))
 	mux.HandleFunc("/api/admin/models/", h.requireLocal(h.handleModelByID))
 	mux.HandleFunc("/api/admin/models/sync", h.requireLocal(h.handleModelSync))
+	mux.HandleFunc("/api/admin/models/test", h.requireLocal(h.handleModelTest))
 	mux.HandleFunc("/api/admin/keys", h.requireLocal(h.handleKeys))
 	mux.HandleFunc("/api/admin/keys/", h.requireLocal(h.handleKeyByID))
 	mux.HandleFunc("/api/admin/logs", h.requireLocal(h.handleLogs))
 	mux.HandleFunc("/api/admin/logs/", h.requireLocal(h.handleLogByID))
 	mux.HandleFunc("/api/admin/stats", h.requireLocal(h.handleStats))
+	mux.HandleFunc("/api/admin/stats/reset", h.requireLocal(h.handleStatsReset))
 	mux.HandleFunc("/api/admin/dashboard", h.requireLocal(h.handleDashboard))
 	mux.HandleFunc("/api/admin/test", h.requireLocal(h.handleTestChannel))
 }

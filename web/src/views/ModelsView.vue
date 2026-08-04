@@ -33,7 +33,7 @@
           <thead>
             <tr class="bg-[#1a1a1a] border-b border-[#262626]">
               <th class="px-4 py-3 text-[10px] font-bold text-[#737373] uppercase tracking-widest">模型 ID</th>
-              <th class="px-4 py-3 text-[10px] font-bold text-[#737373] uppercase tracking-widest">可用渠道及优先级</th>
+              <th class="px-4 py-3 text-[10px] font-bold text-[#737373] uppercase tracking-widest">可用渠道及优先级 (可拖拽调整)</th>
               <th class="px-4 py-3 text-[10px] font-bold text-[#737373] uppercase tracking-widest">映射规则</th>
               <th class="px-4 py-3 text-[10px] font-bold text-[#737373] uppercase tracking-widest">状态</th>
               <th class="px-4 py-3 text-[10px] font-bold text-[#737373] uppercase tracking-widest text-right">操作</th>
@@ -48,13 +48,21 @@
               <td class="px-4 py-4">
                 <div class="flex flex-wrap gap-2">
                   <span v-for="(ch, i) in m.channels" :key="ch.channel_id"
-                    class="px-2 py-1 rounded flex items-center gap-2 text-[11px]"
+                    draggable="true"
+                    @dragstart="onDragStart($event, m, i)"
+                    @dragover.prevent
+                    @drop="onDrop($event, m, i)"
+                    @dragend="onDragEnd"
+                    title="拖动可调整优先级"
+                    class="px-2 py-1 rounded flex items-center gap-2 text-[11px] cursor-grab select-none"
                     :class="i === 0 ? 'bg-[#262626] border border-[#333]' : 'bg-[#1a1a1a] border border-[#262626] opacity-60'">
                     <span class="w-4 h-4 bg-white/10 rounded text-[8px] font-bold flex items-center justify-center">{{ i + 1 }}</span>
-                    {{ ch.channel_name }}
+                    <span>{{ ch.channel_name }}</span>
+                    <span v-if="ch.model_priority === 0" class="text-[8px] text-[#737373] border border-[#333] rounded px-1 leading-tight" title="未单独调整,跟随渠道全局优先级">继承</span>
                   </span>
                   <span v-if="!m.channels.length" class="text-xs text-[#a3a3a3]">--</span>
                 </div>
+                <div class="text-[10px] text-[#525252] mt-1">数字越小优先级越高,拖动调整仅对该模型生效(渠道自身优先级为默认值,可到模型页按需调整)</div>
               </td>
               <td class="px-4 py-4 font-mono text-xs">
                 <template v-if="hasMapping(m)">
@@ -69,6 +77,7 @@
               </td>
               <td class="px-4 py-4 text-right">
                 <span class="text-xs font-bold uppercase tracking-tighter space-x-4">
+                  <button @click="openTest(m)" class="text-green-500 hover:underline">测试</button>
                   <button @click="openLink(m)" class="text-white hover:underline">关联</button>
                   <button @click="removeModel(m)" class="text-red-500 hover:underline">删除</button>
                 </span>
@@ -134,6 +143,60 @@
       </div>
     </div>
 
+    <!-- 模型测试弹窗 -->
+    <div v-if="testModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+      <div class="glass-card w-full max-w-lg p-8 shadow-2xl rounded-sm">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-lg font-bold uppercase tracking-wider">模型测试 — {{ testTarget ? testTarget.model_id : '' }}</h3>
+          <button @click="closeTest" class="text-[#737373] hover:text-white"><Icon icon="lucide:x" /></button>
+        </div>
+        <p class="text-xs text-[#525252] mb-4">对关联渠道发送最小流式请求,测量可用性、首字延迟(TTFT)与回复速度(token/s)</p>
+        <div v-if="testing" class="py-8 text-center text-sm text-[#a3a3a3]">
+          <Icon icon="lucide:loader-2" class="animate-spin inline mr-2" />正在测试,请稍候(每个渠道最多约 20 秒)...
+        </div>
+        <div v-else class="space-y-3 max-h-80 overflow-y-auto pr-1">
+          <div v-for="r in testResults" :key="r.channel_id" class="p-3 bg-[#1a1a1a] border border-[#262626] rounded">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Icon :icon="resultIcon(r)" class="text-sm" :class="resultColor(r)" />
+                <span class="text-sm font-medium">{{ r.channel_name }}</span>
+                <span class="text-[10px] font-mono text-[#737373]">P{{ r.priority }}</span>
+                <StatusBadge v-if="r.channel_status === 'cooldown'" text="Cool Down" type="error" />
+              </div>
+              <span class="text-[10px] uppercase font-bold" :class="r.ok ? 'text-green-500' : 'text-red-500'">
+                {{ r.skipped ? 'SKIPPED' : (r.ok ? 'OK' : 'FAIL') }}
+              </span>
+            </div>
+            <div v-if="r.skip_reason" class="mt-1 text-xs text-[#737373]">{{ r.skip_reason }}</div>
+            <div v-else-if="r.error" class="mt-1 text-xs text-red-500 font-mono break-all">{{ r.error }}</div>
+            <div v-else class="mt-2 grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <div class="text-[10px] text-[#737373] uppercase font-bold">首字延迟</div>
+                <span class="font-mono">{{ r.ttft_ms }} ms</span>
+              </div>
+              <div>
+                <div class="text-[10px] text-[#737373] uppercase font-bold">总耗时</div>
+                <span class="font-mono">{{ r.total_ms }} ms</span>
+              </div>
+              <div>
+                <div class="text-[10px] text-[#737373] uppercase font-bold">回复速度</div>
+                <span class="font-mono">{{ r.speed_tps ? r.speed_tps.toFixed(1) : '--' }} token/s</span>
+                <span v-if="r.tokens_estimated" class="text-[#737373]" title="上游未返回 usage,按输出字符估算">*</span>
+              </div>
+            </div>
+            <div v-if="r.ok && r.completion_tokens" class="mt-1 text-[10px] text-[#737373]">
+              输出 tokens: {{ r.completion_tokens }}{{ r.tokens_estimated ? '(估算)' : '' }}
+            </div>
+          </div>
+          <div v-if="!testResults.length" class="py-6 text-center text-sm text-[#737373]">无结果</div>
+        </div>
+        <div class="flex gap-4 pt-6">
+          <button v-if="!testing" @click="closeTest" class="flex-1 py-3 text-sm font-bold rounded border border-[#262626] hover:bg-[#1a1a1a]">关闭</button>
+          <button v-if="!testing" @click="runTest" class="flex-1 py-3 text-sm font-bold rounded btn-primary">重新测试</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 同步弹窗 -->
     <div v-if="syncModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
       <div class="glass-card w-full max-w-sm p-8 shadow-2xl rounded-sm">
@@ -175,9 +238,15 @@ const newModel = ref({ model_id: '', display_name: '' })
 const linkTarget = ref(null)
 const checkedMap = ref({})
 const upstreamMap = ref({})
+const testModal = ref(false)
+const testing = ref(false)
+const testTarget = ref(null)
+const testResults = ref([])
+let testAbort = null
+let dragFrom = null
 
 const channelCount = computed(() => new Set(models.value.flatMap(m => m.channels.map(c => c.channel_id))).size)
-const pricedCount = computed(() => models.value.filter(m => m.price_input != null || m.price_output != null).length)
+const pricedCount = computed(() => models.value.filter(m => m.price_input != null || m.price_output != null || m.price_cache_read != null).length)
 const cooldownCount = computed(() => channels.value.filter(c => c.status === 'cooldown').length)
 
 const filtered = computed(() => {
@@ -243,6 +312,73 @@ async function removeModel(m) {
   if (!confirm(`删除模型 ${m.model_id}?`)) return
   await api.deleteModel(m.id)
   load()
+}
+function openTest(m) {
+  testTarget.value = m
+  testModal.value = true
+  runTest()
+}
+async function runTest() {
+  if (!testTarget.value || testing.value) return
+  testing.value = true
+  testResults.value = []
+  if (testAbort) testAbort.abort()
+  testAbort = new AbortController()
+  try {
+    const r = await api.testModel(testTarget.value.model_id, testAbort.signal)
+    testResults.value = r.results || []
+  } catch (e) {
+    if (e.name === 'AbortError') return // 用户取消,静默
+    testResults.value = []
+    alert('测试失败:' + e.message)
+  } finally {
+    testing.value = false
+    testAbort = null
+  }
+}
+function closeTest() {
+  if (testing.value && testAbort) testAbort.abort()
+  testModal.value = false
+  testTarget.value = null
+  testResults.value = []
+  testing.value = false
+  testAbort = null
+}
+function resultIcon(r) {
+  if (r.skipped) return 'lucide:skip-forward'
+  return r.ok ? 'lucide:check-circle-2' : 'lucide:x-circle'
+}
+function resultColor(r) {
+  if (r.skipped) return 'text-[#737373]'
+  return r.ok ? 'text-green-500' : 'text-red-500'
+}
+
+// 渠道优先级拖拽排序:drop 后按新顺序重排 priority 并保存
+function onDragStart(e, m, i) {
+  dragFrom = { model: m, index: i }
+  e.dataTransfer.effectAllowed = 'move'
+}
+function onDragEnd() {
+  dragFrom = null
+}
+function onDrop(e, m, i) {
+  e.preventDefault()
+  if (!dragFrom || dragFrom.model.id !== m.id || dragFrom.index === i) return
+  const arr = m.channels
+  const [moved] = arr.splice(dragFrom.index, 1)
+  arr.splice(i, 0, moved)
+  dragFrom = null
+  savePriority(m)
+}
+async function savePriority(m) {
+  const items = m.channels.map((c, idx) => ({ id: c.channel_id, priority: idx + 1 }))
+  try {
+    await api.reorderModelChannels(m.id, items)
+    await load()
+  } catch (e) {
+    alert('保存优先级失败:' + e.message)
+    await load()
+  }
 }
 async function doSync() {
   syncing.value = true

@@ -6,7 +6,7 @@
         <div class="w-2 h-8 bg-white"></div>
         <h1 class="text-2xl font-bold tracking-tight uppercase">价格设置</h1>
       </div>
-      <p class="text-sm text-[#737373] mt-2 max-w-2xl">配置聚合模型单价(元/千 Token),用于日志成本估算。同名模型全局统一定价,不填则成本计为 0。</p>
+      <p class="text-sm text-[#737373] mt-2 max-w-2xl">配置聚合模型单价(元/百万 Token),用于日志成本估算。同名模型全局统一定价,不填则成本计为 0。</p>
     </div>
 
     <!-- 定价表 -->
@@ -35,8 +35,9 @@
             <tr class="bg-[#1a1a1a] border-b border-[#262626]">
               <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">模型 ID</th>
               <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">关联渠道数</th>
-              <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">输入单价 (元/1K)</th>
-              <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">输出单价 (元/1K)</th>
+              <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">输入单价 (元/M)</th>
+              <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">缓存读取单价 (元/M)</th>
+              <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">输出单价 (元/M)</th>
               <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">计费状态</th>
               <th class="px-6 py-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest text-right">操作</th>
             </tr>
@@ -46,15 +47,19 @@
               <td class="px-6 py-4 font-mono text-sm">{{ m.model_id }}</td>
               <td class="px-6 py-4 text-xs text-[#737373]">{{ m.channels.length }} Channels</td>
               <td class="px-6 py-4">
-                <input v-model="prices[m.id].input" type="number" step="0.001" min="0" placeholder="0.000"
+                <input v-model="prices[m.id].input" type="number" step="0.0001" min="0" placeholder="0.0000"
                   class="price-input w-24 px-2 py-1 text-xs mono-text" />
               </td>
               <td class="px-6 py-4">
-                <input v-model="prices[m.id].output" type="number" step="0.001" min="0" placeholder="0.000"
+                <input v-model="prices[m.id].cache" type="number" step="0.0001" min="0" placeholder="0.0000"
                   class="price-input w-24 px-2 py-1 text-xs mono-text" />
               </td>
               <td class="px-6 py-4">
-                <StatusBadge v-if="m.price_input != null || m.price_output != null" text="Active" type="success" />
+                <input v-model="prices[m.id].output" type="number" step="0.0001" min="0" placeholder="0.0000"
+                  class="price-input w-24 px-2 py-1 text-xs mono-text" />
+              </td>
+              <td class="px-6 py-4">
+                <StatusBadge v-if="m.price_input != null || m.price_output != null || m.price_cache_read != null" text="Active" type="success" />
                 <StatusBadge v-else text="Free Tier?" type="info" />
               </td>
               <td class="px-6 py-4 text-right">
@@ -62,7 +67,7 @@
               </td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="6" class="px-6 py-10 text-center text-sm text-[#737373]">暂无模型,请先到模型管理页添加或同步</td>
+              <td colspan="7" class="px-6 py-10 text-center text-sm text-[#737373]">暂无模型,请先到模型管理页添加或同步</td>
             </tr>
           </tbody>
         </table>
@@ -146,7 +151,7 @@ const estimateCost = computed(() => {
   let total = 0
   for (const m of models.value) {
     const p = prices.value[m.id]
-    total += estimateTokens.value / 1000 * (Number(p.input) || 0)
+    total += estimateTokens.value / 1000000 * (Number(p.input) || 0)
   }
   return total
 })
@@ -154,7 +159,7 @@ const estimateCost = computed(() => {
 function initPrices() {
   prices.value = {}
   for (const m of models.value) {
-    prices.value[m.id] = { input: m.price_input ?? '', output: m.price_output ?? '' }
+    prices.value[m.id] = { input: m.price_input ?? '', cache: m.price_cache_read ?? '', output: m.price_output ?? '' }
   }
 }
 
@@ -162,15 +167,16 @@ async function saveAll() {
   for (const m of models.value) {
     const p = prices.value[m.id]
     const input = p.input === '' ? null : Number(p.input)
+    const cache = p.cache === '' ? null : Number(p.cache)
     const output = p.output === '' ? null : Number(p.output)
-    if (input !== m.price_input || output !== m.price_output) {
-      await api.updatePrice(m.id, input, output)
+    if (input !== m.price_input || cache !== m.price_cache_read || output !== m.price_output) {
+      await api.updatePrice(m.id, input, output, cache)
     }
   }
   await load()
 }
 function resetPrice(m) {
-  prices.value[m.id] = { input: '', output: '' }
+  prices.value[m.id] = { input: '', cache: '', output: '' }
 }
 async function importFromChannel() {
   if (!batchChannel.value) return alert('请选择渠道')
@@ -181,7 +187,7 @@ async function importFromChannel() {
   alert('一期未内置官方价源。请导出价格表后填写,或手动逐行输入。')
 }
 function exportJSON() {
-  const data = models.value.map(m => ({ model_id: m.model_id, price_input: m.price_input, price_output: m.price_output }))
+  const data = models.value.map(m => ({ model_id: m.model_id, price_input: m.price_input, price_cache_read: m.price_cache_read, price_output: m.price_output }))
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
@@ -198,7 +204,7 @@ async function onFile(e) {
   for (const item of data) {
     const m = models.value.find(x => x.model_id === item.model_id)
     if (m) {
-      await api.updatePrice(m.id, item.price_input ?? null, item.price_output ?? null)
+      await api.updatePrice(m.id, item.price_input ?? null, item.price_output ?? null, item.price_cache_read ?? null)
     }
   }
   e.target.value = ''

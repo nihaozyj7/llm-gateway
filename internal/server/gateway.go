@@ -33,6 +33,22 @@ func (h *GatewayHandler) Mount(mux *http.ServeMux) {
 }
 
 func (h *GatewayHandler) handleV1(w http.ResponseWriter, r *http.Request) {
+	// CORS:允许浏览器端应用(如本地网页、Web 工具)跨域调用网关 API。
+	// 仅对 /v1/* 开放;管理接口 /api/admin/* 不开 CORS,避免远程页面借本机浏览器越权。
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+	}
+	if r.Method == http.MethodOptions {
+		// 预检请求:直接放行,不校验 API key(预检不带 Authorization 头)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	// 鉴权:Authorization: Bearer <api key>
 	key := extractBearer(r)
 	if key == "" {
@@ -105,7 +121,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		})
 		logEntry.Status = "fail"
 		logEntry.Error = err.Error()
-		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
 		return
 	}
 	if res.BizError {
@@ -116,7 +132,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		logEntry.Error = firstLine(res.Body)
 		logEntry.ChannelID = cand.ChannelID
 		logEntry.ChannelName = cand.ChannelName
-		h.writeLog(start, logEntry, res.LatencyMs, res.Body, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, res.LatencyMs, res.Body, 0, 0, 0, 0, 0)
 		return
 	}
 	if res.ChannelFail {
@@ -135,7 +151,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 			logEntry.ChannelID = cand.ChannelID
 			logEntry.ChannelName = cand.ChannelName
 		}
-		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0, 0)
 		return
 	}
 
@@ -148,14 +164,14 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 	if attempts > 1 {
 		status = "retry_success" // 发生过重试或降级后成功
 	}
-	var pt, ct, tt int64
+	var pt, ct, cache, tt int64
 	if res.Usage != nil {
-		pt, ct, tt = res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens
+		pt, ct, cache, tt = res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.CacheReadTokens, res.Usage.TotalTokens
 	}
 	logEntry.Status = status
 	logEntry.ChannelID = cand.ChannelID
 	logEntry.ChannelName = cand.ChannelName
-	h.writeLog(start, logEntry, res.LatencyMs, res.Body, pt, ct, tt, res.Status)
+	h.writeLog(start, logEntry, res.LatencyMs, res.Body, pt, ct, cache, tt, res.Status)
 }
 
 func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Request, body []byte, modelID, clientPath string, start time.Time, logEntry *storeLogEntry) {
@@ -168,7 +184,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 		}
 		logEntry.Status = "fail"
 		logEntry.Error = err.Error()
-		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
 		return
 	}
 	if res == nil {
@@ -185,13 +201,13 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 			logEntry.ChannelID = cand.ChannelID
 			logEntry.ChannelName = cand.ChannelName
 		}
-		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
 		return
 	}
 	// 已开始流式输出(成功或中途断开)
-	var pt, ct, tt int64
+	var pt, ct, cache, tt int64
 	if res.Usage != nil {
-		pt, ct, tt = res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens
+		pt, ct, cache, tt = res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.CacheReadTokens, res.Usage.TotalTokens
 	}
 	status := "success"
 	if attempts > 1 {
@@ -207,7 +223,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 		logEntry.ChannelName = cand.ChannelName
 	}
 	latency := time.Since(start).Milliseconds()
-	h.writeLog(start, logEntry, latency, nil, pt, ct, tt, 200)
+	h.writeLog(start, logEntry, latency, nil, pt, ct, cache, tt, 200)
 }
 
 // handleListModels 返回聚合模型列表(OpenAI 格式)
