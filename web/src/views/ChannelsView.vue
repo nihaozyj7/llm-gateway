@@ -1,16 +1,16 @@
 <template>
   <div>
-    <div class="flex items-center justify-between mb-8">
-      <div class="flex items-center gap-3">
-        <div class="w-2 h-8 bg-white"></div>
-        <div>
+    <div class="mb-10">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-2 h-8 bg-white"></div>
           <h1 class="text-2xl font-bold tracking-tight uppercase">渠道管理</h1>
-          <p class="text-sm text-[#737373] mt-1">上游渠道(OpenAI 兼容端点)配置与监控,数字越小优先级越高</p>
         </div>
+        <button @click="openCreate" class="text-xs font-bold px-4 py-2 rounded btn-primary flex items-center gap-1">
+          <Icon icon="lucide:plus" /> 添加新渠道
+        </button>
       </div>
-      <button @click="openCreate" class="text-xs font-bold px-4 py-2 rounded btn-primary flex items-center gap-1">
-        <Icon icon="lucide:plus" /> 添加新渠道
-      </button>
+      <p class="text-sm text-[#737373] mt-2">上游渠道(OpenAI 兼容端点)配置与监控,数字越小优先级越高</p>
     </div>
 
     <div class="channel-grid">
@@ -129,9 +129,9 @@
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">超时(毫秒)</label>
-              <input v-model.number="form.timeout_ms" type="number" min="0" placeholder="0 = 全局(默认 60000)"
+              <input v-model.number="form.timeout_ms" type="number" min="0" placeholder="0 = 全局(首次响应默认 60000)"
                 class="w-full px-4 py-3 rounded input-field text-sm mono-text" />
-              <p class="text-[10px] text-[#525252] mt-1">上游请求超时,留空或 0 使用全局配置</p>
+              <p class="text-[10px] text-[#525252] mt-1">流式 = 首次响应(TTFB)超时,全局默认 60000ms;非流式 = 完整请求超时,全局默认 300000ms(5 分钟)</p>
             </div>
             <div>
               <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">冷静期(毫秒)</label>

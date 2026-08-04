@@ -36,7 +36,7 @@
       </div>
 
       <!-- 筛选 -->
-      <div class="grid md:grid-cols-4 gap-4 p-6 border-b border-[#262626] bg-[#0e0e0e]">
+      <div class="grid md:grid-cols-4 xl:grid-cols-5 gap-4 p-6 border-b border-[#262626] bg-[#0e0e0e]">
         <div>
           <label class="text-[10px] font-bold uppercase tracking-widest mb-2 block text-[#737373]">渠道筛选</label>
           <select v-model="filters.channel_id" @change="applyFilter" class="w-full bg-[#1a1a1a] border-[#262626] text-xs px-3 py-2 rounded focus:border-white input-field">
@@ -62,6 +62,13 @@
           </select>
         </div>
         <div>
+          <label class="text-[10px] font-bold uppercase tracking-widest mb-2 block text-[#737373]">密钥筛选</label>
+          <select v-model="filters.key_name" @change="applyFilter" class="w-full bg-[#1a1a1a] border-[#262626] text-xs px-3 py-2 rounded focus:border-white input-field">
+            <option value="">所有密钥</option>
+            <option v-for="k in keys" :key="k.id" :value="k.name">{{ k.name }}</option>
+          </select>
+        </div>
+        <div>
           <label class="text-[10px] font-bold uppercase tracking-widest mb-2 block text-[#737373]">搜索关键词</label>
           <div class="relative">
             <Icon icon="lucide:search" class="absolute left-3 top-1/2 -translate-y-1/2 text-[#404040]" />
@@ -79,8 +86,9 @@
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">源 IP</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">渠道 / 模型</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">状态</th>
-              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">耗时</th>
-              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">TOKENS (P/C/T)</th>
+              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="请求发起 → 结束的总耗时">耗时</th>
+              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="P = Prompt: 输入(提示词)消耗的 tokens; C = Completion: 输出(生成内容)消耗的 tokens; T = Total: 输入+输出总计。蓝色数字为命中缓存的输入 tokens">TOKENS (P输入 / C输出 / T总计)</th>
+              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="输出 token 速度 = 输出 tokens(Completion) ÷ 输出耗时。输出耗时指从请求第一次被返回到结束的时间">Token 速度</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">预估成本</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">操作</th>
             </tr>
@@ -106,6 +114,7 @@
                   {{ fmtNum(log.prompt_tokens) }} / {{ fmtNum(log.completion_tokens) }} / <span class="text-white">{{ fmtNum(log.total_tokens) }}</span>
                   <span v-if="log.cache_read_tokens" class="text-[10px] text-blue-400" title="命中缓存读取的 tokens"> · Cache {{ fmtNum(log.cache_read_tokens) }}</span>
                 </td>
+                <td class="p-4 font-mono text-xs text-[#a3a3a3]" :title="tokenSpeedDetail(log)">{{ tokenSpeed(log) }}</td>
                 <td class="p-4 font-mono text-xs text-white uppercase">{{ fmtCost(log.cost) }}</td>
                 <td class="p-4">
                   <button @click.stop="toggleExpand(log.id)" class="text-xs underline underline-offset-4 decoration-[#404040] hover:text-white">
@@ -115,7 +124,7 @@
               </tr>
               <!-- 展开行 -->
               <tr v-if="expanded === log.id" class="bg-[#0d0d0d]">
-                <td colspan="8" class="p-8">
+                <td colspan="9" class="p-8">
                   <div class="grid md:grid-cols-2 gap-8">
                     <div>
                       <div class="flex items-center justify-between mb-2">
@@ -139,7 +148,7 @@
               </tr>
             </template>
             <tr v-if="!logs.length">
-              <td colspan="8" class="p-10 text-center text-sm text-[#737373]">暂无日志记录</td>
+              <td colspan="9" class="p-10 text-center text-sm text-[#737373]">暂无日志记录</td>
             </tr>
           </tbody>
         </table>
@@ -197,11 +206,12 @@ const cooldown = ref([])
 const logs = ref([])
 const channels = ref([])
 const models = ref([])
+const keys = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = 25
+const pageSize = 10
 const expanded = ref(null)
-const filters = ref({ channel_id: '', model: '', status: '', keyword: '' })
+const filters = ref({ channel_id: '', model: '', status: '', key_name: '', keyword: '' })
 
 const today = new Date().toLocaleDateString('zh-CN')
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
@@ -223,6 +233,18 @@ function badgeType(s) {
 function toggleExpand(id) {
   expanded.value = expanded.value === id ? null : id
 }
+// 输出 token 速度:输出 tokens ÷ 输出耗时(从首次响应到结束,单位:tok/s)
+function tokenSpeed(log) {
+  if (!log || !log.completion_tokens || log.first_response_ms <= 0 || log.latency_ms <= 0) return '--'
+  const outputMs = log.latency_ms - log.first_response_ms
+  if (outputMs <= 0) return '--'
+  return fmtNum(Math.round((log.completion_tokens * 1000) / outputMs)) + ' tok/s'
+}
+function tokenSpeedDetail(log) {
+  if (!log || log.first_response_ms <= 0) return ''
+  const outputMs = Math.max(0, log.latency_ms - log.first_response_ms)
+  return `输出 ${fmtNum(log.completion_tokens)} tokens ÷ ${outputMs}ms ≈ ${tokenSpeed(log)}`
+}
 function prettyJSON(s) {
   if (!s) return '--'
   try { return JSON.stringify(JSON.parse(s), null, 2) } catch { return s }
@@ -240,6 +262,7 @@ async function loadLogs() {
   if (filters.value.channel_id) params.channel_id = filters.value.channel_id
   if (filters.value.model) params.model = filters.value.model
   if (filters.value.status) params.status = filters.value.status
+  if (filters.value.key_name) params.key_name = filters.value.key_name
   if (filters.value.keyword) params.keyword = filters.value.keyword
   const r = await api.listLogs(params)
   logs.value = r.logs
@@ -256,11 +279,12 @@ function changePage(p) {
 }
 
 async function load() {
-  const [d, c, m] = await Promise.all([api.dashboard(), api.listChannels(), api.listModels()])
+  const [d, c, m, k] = await Promise.all([api.dashboard(), api.listChannels(), api.listModels(), api.listKeys()])
   summary.value = d.summary
   cooldown.value = d.cooldown || []
   channels.value = c.channels
   models.value = m.models
+  keys.value = k.keys || []
   await loadLogs()
 }
 

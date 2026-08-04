@@ -24,12 +24,14 @@ func TestLogUpstreamModelRoundTrip(t *testing.T) {
 	l := &model.RequestLog{
 		RequestTime:      now,
 		RequestID:        "req_test_001",
+		APIKeyName:       "测试密钥",
 		ChannelID:        7,
 		ChannelName:      "chan-b",
 		Model:            "a",
 		UpstreamModel:    "b", // 渠道映射后实际转发模型
 		Status:           "success",
 		LatencyMs:        123,
+		FirstResponseMs:  45,
 		PromptTokens:     10,
 		CompletionTokens: 20,
 		TotalTokens:      30,
@@ -53,14 +55,36 @@ func TestLogUpstreamModelRoundTrip(t *testing.T) {
 	if got.Model != "a" {
 		t.Errorf("Model = %q, want %q", got.Model, "a")
 	}
+	if got.APIKeyName != "测试密钥" {
+		t.Errorf("APIKeyName = %q, want %q", got.APIKeyName, "测试密钥")
+	}
+	if got.FirstResponseMs != 45 {
+		t.Errorf("FirstResponseMs = %d, want 45", got.FirstResponseMs)
+	}
 
 	// ListLogs 也带出新列
-	logs, total, err := st.ListLogs(nil, "", "", "", 0, 10)
+	logs, total, err := st.ListLogs(nil, "", "", "", "", 0, 10)
 	if err != nil {
 		t.Fatalf("ListLogs: %v", err)
 	}
 	if total != 1 || len(logs) != 1 || logs[0].UpstreamModel != "b" {
 		t.Errorf("ListLogs = %d logs (total %d), first upstream=%q; want 1 log with upstream 'b'", len(logs), total, logs[0].UpstreamModel)
+	}
+
+	// 按密钥名称筛选
+	logs, total, err = st.ListLogs(nil, "", "", "测试密钥", "", 0, 10)
+	if err != nil {
+		t.Fatalf("ListLogs keyName: %v", err)
+	}
+	if total != 1 || logs[0].APIKeyName != "测试密钥" {
+		t.Errorf("keyName filter = %d logs (total %d); want 1 matching log", len(logs), total)
+	}
+	logs, total, err = st.ListLogs(nil, "", "", "不存在的密钥", "", 0, 10)
+	if err != nil {
+		t.Fatalf("ListLogs keyName no-match: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("keyName no-match filter = total %d; want 0", total)
 	}
 }
 

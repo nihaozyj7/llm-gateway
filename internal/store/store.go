@@ -164,6 +164,14 @@ func (s *Store) migrate() error {
 	if err := ensureColumn(s.db, "request_logs", "upstream_model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// 旧库迁移:request_logs 补充调用密钥名称列(用于按密钥筛选日志)
+	if err := ensureColumn(s.db, "request_logs", "api_key_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	// 旧库迁移:request_logs 补充首次响应耗时列(毫秒,用于计算输出 token 速度)
+	if err := ensureColumn(s.db, "request_logs", "first_response_ms", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	return s.migrateV1()
 }
 

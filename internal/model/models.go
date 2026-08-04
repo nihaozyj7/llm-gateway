@@ -69,12 +69,14 @@ type RequestLog struct {
 	ID               int64     `json:"id"`
 	RequestTime      time.Time `json:"request_time"`
 	RequestID        string    `json:"request_id"`
+	APIKeyName       string    `json:"api_key_name"` // 调用所使用的 API Key 名称
 	ChannelID        int64     `json:"channel_id"`
 	ChannelName      string    `json:"channel_name"`
 	Model            string    `json:"model"`          // 客户端请求的模型
 	UpstreamModel    string    `json:"upstream_model"` // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
 	Status           string    `json:"status"`         // success / fail / biz_error / retry_success
-	LatencyMs        int64     `json:"latency_ms"`
+	LatencyMs        int64     `json:"latency_ms"`             // 请求发起 → 结束总耗时
+	FirstResponseMs  int64     `json:"first_response_ms"`      // 请求发起 → 收到首次响应(响应头)耗时,用于计算输出 token 速度
 	PromptTokens     int64     `json:"prompt_tokens"`
 	CompletionTokens int64     `json:"completion_tokens"`
 	TotalTokens      int64     `json:"total_tokens"`

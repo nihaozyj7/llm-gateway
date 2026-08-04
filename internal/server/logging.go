@@ -9,15 +9,17 @@ import (
 
 // storeLogEntry 日志记录中间态
 type storeLogEntry struct {
-	RequestID     string
-	ChannelID     int64
-	ChannelName   string
-	Model         string
-	UpstreamModel string // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
-	Status        string
-	Error         string
-	SourceIP      string
-	PayloadReq    string
+	RequestID       string
+	KeyName         string // 调用所使用的 API Key 名称
+	ChannelID       int64
+	ChannelName     string
+	Model           string
+	UpstreamModel   string // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
+	Status          string
+	Error           string
+	SourceIP        string
+	PayloadReq      string
+	FirstResponseMs int64 // 请求发起 → 收到首次响应耗时(毫秒)
 }
 
 // writeLog 落库日志 + 更新统计,并按模型价格计算成本
@@ -39,12 +41,14 @@ func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs i
 	l := &model.RequestLog{
 		RequestTime:      start,
 		RequestID:        e.RequestID,
+		APIKeyName:       e.KeyName,
 		ChannelID:        e.ChannelID,
 		ChannelName:      e.ChannelName,
 		Model:            e.Model,
 		UpstreamModel:    e.UpstreamModel,
 		Status:           e.Status,
 		LatencyMs:        latencyMs,
+		FirstResponseMs:  e.FirstResponseMs,
 		PromptTokens:     pt,
 		CompletionTokens: ct,
 		TotalTokens:      tt,

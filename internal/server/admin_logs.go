@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// GET /api/admin/logs?channel_id=&model=&status=&keyword=&page=&page_size=
+// GET /api/admin/logs?channel_id=&model=&status=&key_name=&keyword=&page=&page_size=
 func (h *AdminHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -29,7 +29,7 @@ func (h *AdminHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if pageSize < 1 || pageSize > 200 {
 		pageSize = 25
 	}
-	logs, total, err := h.store.ListLogs(channelID, q.Get("model"), q.Get("status"), q.Get("keyword"), (page-1)*pageSize, pageSize)
+	logs, total, err := h.store.ListLogs(channelID, q.Get("model"), q.Get("status"), q.Get("key_name"), q.Get("keyword"), (page-1)*pageSize, pageSize)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

@@ -7,16 +7,16 @@ import (
 	"gateway/internal/model"
 )
 
-const logCols = "id, request_time, request_id, channel_id, channel_name, model, upstream_model, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, payload_request, payload_response"
+const logCols = "id, request_time, request_id, channel_id, channel_name, model, upstream_model, status, latency_ms, first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response"
 
 // InsertLog 插入一条请求日志
 func (s *Store) InsertLog(l *model.RequestLog) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO request_logs (request_time, request_id, channel_id, channel_name, model, upstream_model, status, latency_ms,
-		prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, payload_request, payload_response)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts(l.RequestTime), l.RequestID, l.ChannelID, l.ChannelName, l.Model, l.UpstreamModel, l.Status, l.LatencyMs,
-		l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.CacheReadTokens, l.Cost, l.Error, l.SourceIP,
-		l.PayloadRequest, l.PayloadResponse)
+		l.FirstResponseMs, l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.CacheReadTokens, l.Cost, l.Error, l.SourceIP,
+		l.APIKeyName, l.PayloadRequest, l.PayloadResponse)
 	if err != nil {
 		return 0, err
 	}
@@ -24,7 +24,7 @@ func (s *Store) InsertLog(l *model.RequestLog) (int64, error) {
 }
 
 // ListLogs 分页查询日志(支持过滤),返回日志与总数
-func (s *Store) ListLogs(channelID *int64, modelFilter string, status string, keyword string, offset, limit int) ([]*model.RequestLog, int64, error) {
+func (s *Store) ListLogs(channelID *int64, modelFilter string, status string, keyName string, keyword string, offset, limit int) ([]*model.RequestLog, int64, error) {
 	where := "WHERE 1=1"
 	args := []any{}
 	if channelID != nil {
@@ -38,6 +38,10 @@ func (s *Store) ListLogs(channelID *int64, modelFilter string, status string, ke
 	if status != "" {
 		where += " AND status = ?"
 		args = append(args, status)
+	}
+	if keyName != "" {
+		where += " AND api_key_name = ?"
+		args = append(args, keyName)
 	}
 	if keyword != "" {
 		where += " AND (request_id LIKE ? OR source_ip LIKE ?)"
@@ -80,8 +84,8 @@ func scanLog(row interface{ Scan(...any) error }) (*model.RequestLog, error) {
 	var l model.RequestLog
 	var rt int64
 	err := row.Scan(&l.ID, &rt, &l.RequestID, &l.ChannelID, &l.ChannelName, &l.Model, &l.UpstreamModel, &l.Status,
-		&l.LatencyMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.CacheReadTokens, &l.Cost, &l.Error, &l.SourceIP,
-		&l.PayloadRequest, &l.PayloadResponse)
+		&l.LatencyMs, &l.FirstResponseMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.CacheReadTokens, &l.Cost, &l.Error, &l.SourceIP,
+		&l.APIKeyName, &l.PayloadRequest, &l.PayloadResponse)
 	if err != nil {
 		return nil, err
 	}

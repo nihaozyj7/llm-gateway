@@ -1,13 +1,16 @@
 <template>
   <div>
-    <div class="flex justify-between items-end mb-8">
-      <div>
-        <h1 class="text-2xl font-bold uppercase tracking-tight">API Keys 管理</h1>
-        <p class="text-sm text-[#737373] mt-1">签发 / 撤销网关 API Key,客户端调用 /v1/* 时校验</p>
+    <div class="mb-10">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-2 h-8 bg-white"></div>
+          <h1 class="text-2xl font-bold tracking-tight uppercase">API Keys 管理</h1>
+        </div>
+        <button @click="openCreate" class="bg-white text-black px-4 py-2 rounded text-sm font-bold hover:bg-[#e5e5e5] flex items-center gap-1">
+          <Icon icon="lucide:plus" class="text-lg" /> 创建新密钥
+        </button>
       </div>
-      <button @click="openCreate" class="bg-white text-black px-4 py-2 rounded text-sm font-bold hover:bg-[#e5e5e5] flex items-center gap-1">
-        <Icon icon="lucide:plus" class="text-lg" /> 创建新密钥
-      </button>
+      <p class="text-sm text-[#737373] mt-2">签发 / 撤销网关 API Key,客户端调用 /v1/* 时校验</p>
     </div>
 
     <!-- 客户端接入指南 -->

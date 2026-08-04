@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,18 +15,38 @@ import (
 
 // StreamResult 流式转发结果
 type StreamResult struct {
-	ChannelFail  bool // 首包前失败(可降级)
-	Started      bool // 是否已向客户端写入首字节
-	ErrorMessage string
-	Usage        *Usage
+	ChannelFail     bool   // 首包前失败(可降级)
+	Started         bool   // 是否已向客户端写入首字节
+	ErrorMessage    string
+	Usage           *Usage
+	FirstResponseMs int64 // 请求发起 → 收到首次响应(响应头)耗时
 }
 
-// doStreamOnce 单次流式转发:透传 SSE,同时截获 usage
-// 首包前失败返回 ChannelFail=true(调用方可降级重试);已开始输出则不再重试
-// timeout 为渠道级超时;<=0 时回退到全局 cfg.UpstreamTimeout(再 <=0 则不设超时)
+// doStreamOnce 单次流式转发:透传 SSE,同时截获 usage。
+// 超时语义(两类独立):
+//   - TTFB(首次响应):渠道级 timeout,否则全局 cfg.UpstreamTimeout;
+//     指「请求发起后到收到第一个响应的时间」,超过即判首包前失败(可降级重试);
+//     一旦收到响应头,该超时不再生效,流式输出不会被它打断。
+//   - 流式最长持续时间:cfg.StreamMaxDuration(默认 6 分钟);
+//     指「整个流式请求允许的最长时长」,超过后即使仍在输出也判定超时。
+//
+// timeout 为渠道级超时;首包前失败返回 ChannelFail=true(调用方可降级重试);已开始输出则不再重试
 func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target string, body []byte, apiKey, authHeader string, timeout time.Duration) *StreamResult {
-	reqCtx, cancel := r.requestContext(ctx, timeout)
+	start := time.Now()
+	ttfb := timeout
+	if ttfb <= 0 {
+		ttfb = r.cfg.UpstreamTimeout
+	}
+	maxDur := r.cfg.StreamMaxDuration
+
+	// 请求 context:以流式最长持续时间为 deadline,覆盖整个流式过程(含 body 读取)。
+	// 未配置(<=0)时仅用 WithCancel,便于 TTFB 定时器中断等待响应头。
+	reqCtx, cancel := context.WithCancel(ctx)
+	if maxDur > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, maxDur)
+	}
 	defer cancel()
+
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return &StreamResult{ChannelFail: true, ErrorMessage: err.Error()}
@@ -41,9 +62,32 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
+	// TTFB 定时器:等待首个响应期间超时则取消请求(首次响应超时)。
+	// Do 返回后立即 Stop;若定时器恰在返回瞬间已触发,则请求已被取消,按 TTFB 超时处理。
+	var ttfbTimer *time.Timer
+	if ttfb > 0 {
+		ttfbTimer = time.AfterFunc(ttfb, cancel)
+	}
 	resp, err := r.client.Do(req)
+	firstMs := time.Since(start).Milliseconds()
+	ttfbStopped := true
+	if ttfbTimer != nil {
+		ttfbStopped = ttfbTimer.Stop()
+	}
 	if err != nil {
-		return &StreamResult{ChannelFail: true, ErrorMessage: err.Error()}
+		if !ttfbStopped {
+			// TTFB 定时器已触发:首次响应超时
+			return &StreamResult{ChannelFail: true, ErrorMessage: "upstream timeout: first response not received within " + ttfb.String(), FirstResponseMs: firstMs}
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return &StreamResult{ChannelFail: true, ErrorMessage: "stream duration exceeded (max " + maxDur.String() + ")", FirstResponseMs: firstMs}
+		}
+		return &StreamResult{ChannelFail: true, ErrorMessage: err.Error(), FirstResponseMs: firstMs}
+	}
+	if !ttfbStopped {
+		// 极小竞态:响应头到达与 TTFB 定时器触发同时发生,请求已被取消,无法继续读取
+		resp.Body.Close()
+		return &StreamResult{ChannelFail: true, ErrorMessage: "upstream timeout: first response not received within " + ttfb.String(), FirstResponseMs: firstMs}
 	}
 	defer resp.Body.Close()
 
@@ -56,8 +100,9 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 		}
 		// 脱敏:仅保留状态码,不上游原始错误体(避免泄漏内部细节)
 		return &StreamResult{
-			ChannelFail:  isChannelFailure(resp.StatusCode, nil),
-			ErrorMessage: fmt.Sprintf("upstream HTTP %d", resp.StatusCode),
+			ChannelFail:     isChannelFailure(resp.StatusCode, nil),
+			ErrorMessage:    fmt.Sprintf("upstream HTTP %d", resp.StatusCode),
+			FirstResponseMs: firstMs,
 		}
 	}
 
@@ -75,11 +120,20 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 
 	// 逐行透传,扫描 data: 块截获 usage
 	br := bufio.NewReader(resp.Body)
-	buf := make([]byte, 0, 4096)
 	var usage *Usage
 	var writeErr error
 
 	for {
+		// 流式最长持续时间检查:超时后即使仍在输出也判定超时;
+		// 客户端断开(父 ctx 取消)与 maxDur 到期需区分,避免误报超时
+		if err := reqCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				writeErr = fmt.Errorf("stream duration exceeded (max %s)", maxDur)
+			} else {
+				writeErr = err // context.Canceled:客户端断开/上层取消
+			}
+			break
+		}
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
 			if _, werr := w.Write(line); werr != nil {
@@ -92,10 +146,6 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 			// 收集 data: 行用于 usage 解析(只保留最近若干行,防止无限增长)
 			trimmed := strings.TrimSpace(string(line))
 			if strings.HasPrefix(trimmed, "data:") {
-				buf = append(buf, trimmed...)
-				if len(buf) > 64*1024 {
-					buf = buf[len(buf)-64*1024:]
-				}
 				if u := parseStreamUsage(trimmed); u != nil {
 					usage = u
 				}
@@ -109,11 +159,10 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 		}
 	}
 
-	_ = buf
 	if writeErr != nil {
-		return &StreamResult{Started: true, ErrorMessage: writeErr.Error(), Usage: usage}
+		return &StreamResult{Started: true, ErrorMessage: writeErr.Error(), Usage: usage, FirstResponseMs: firstMs}
 	}
-	return &StreamResult{Started: true, Usage: usage}
+	return &StreamResult{Started: true, Usage: usage, FirstResponseMs: firstMs}
 }
 
 // parseStreamUsage 从单行 SSE data 中解析 usage

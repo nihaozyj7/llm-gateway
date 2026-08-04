@@ -23,8 +23,13 @@ type Config struct {
 	CooldownDuration time.Duration `json:"cooldown_duration"`
 	// CooldownThreshold 连续失败多少次触发冷静
 	CooldownThreshold int `json:"cooldown_threshold"`
-	// UpstreamTimeout 上游请求超时
+	// UpstreamTimeout 上游请求首次响应(TTFB)超时:请求发起后到收到第一个响应的时间,
+	// 对流式与非流式都生效;流式收到首包后不再受此限制
 	UpstreamTimeout time.Duration `json:"upstream_timeout"`
+	// NonStreamTimeout 非流式请求完整超时(含读取完整响应体),默认 5 分钟
+	NonStreamTimeout time.Duration `json:"non_stream_timeout"`
+	// StreamMaxDuration 流式请求最长持续时间:超过后即使仍在输出也判定超时,默认 6 分钟
+	StreamMaxDuration time.Duration `json:"stream_max_duration"`
 	// MaxAttemptsPerRequest 单请求最多尝试渠道数(0=不限)
 	MaxAttemptsPerRequest int `json:"max_attempts_per_request"`
 	// RetrySameChannel 失败后是否重试同一渠道一次
@@ -48,6 +53,8 @@ func Default() *Config {
 		CooldownDuration:      10 * time.Minute,
 		CooldownThreshold:     1,
 		UpstreamTimeout:       60 * time.Second,
+		NonStreamTimeout:      5 * time.Minute,
+		StreamMaxDuration:     6 * time.Minute,
 		MaxAttemptsPerRequest: 0,
 		RetrySameChannel:      true,
 		LogPayloads:           true,

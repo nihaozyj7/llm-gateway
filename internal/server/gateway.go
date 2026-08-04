@@ -101,6 +101,7 @@ func (h *GatewayHandler) handleV1(w http.ResponseWriter, r *http.Request) {
 
 	logEntry := &storeLogEntry{
 		RequestID:  requestID,
+		KeyName:    ak.Name,
 		Model:      modelID,
 		SourceIP:   sourceIP,
 		PayloadReq: string(body),
@@ -134,6 +135,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		logEntry.Error = firstLine(res.Body)
 		logEntry.ChannelID = cand.ChannelID
 		logEntry.ChannelName = cand.ChannelName
+		logEntry.FirstResponseMs = res.FirstResponseMs
 		h.writeLog(start, logEntry, res.LatencyMs, res.Body, 0, 0, 0, 0, 0)
 		return
 	}
@@ -153,6 +155,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 			logEntry.ChannelID = cand.ChannelID
 			logEntry.ChannelName = cand.ChannelName
 		}
+		logEntry.FirstResponseMs = res.FirstResponseMs
 		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0, 0)
 		return
 	}
@@ -173,6 +176,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 	logEntry.Status = status
 	logEntry.ChannelID = cand.ChannelID
 	logEntry.ChannelName = cand.ChannelName
+	logEntry.FirstResponseMs = res.FirstResponseMs
 	h.writeLog(start, logEntry, res.LatencyMs, res.Body, pt, ct, cache, tt, res.Status)
 }
 
@@ -226,6 +230,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 		logEntry.ChannelID = cand.ChannelID
 		logEntry.ChannelName = cand.ChannelName
 	}
+	logEntry.FirstResponseMs = res.FirstResponseMs
 	latency := time.Since(start).Milliseconds()
 	h.writeLog(start, logEntry, latency, nil, pt, ct, cache, tt, 200)
 }

@@ -18,13 +18,14 @@ import (
 
 // Result 单次上游请求结果
 type Result struct {
-	Status       int    // 上游 HTTP 状态
-	Body         []byte // 非流式响应体
-	ChannelFail  bool   // 是否算渠道失败(可降级)
-	BizError     bool   // 业务错误(直接返回,不降级)
-	ErrorMessage string
-	Usage        *Usage
-	LatencyMs    int64
+	Status          int    // 上游 HTTP 状态
+	Body            []byte // 非流式响应体
+	ChannelFail     bool   // 是否算渠道失败(可降级)
+	BizError        bool   // 业务错误(直接返回,不降级)
+	ErrorMessage    string
+	Usage           *Usage
+	LatencyMs       int64 // 请求发起 → 读完响应体 总耗时
+	FirstResponseMs int64 // 请求发起 → 收到首次响应(响应头)耗时
 }
 
 // Usage token 用量
@@ -192,22 +193,19 @@ func (r *Router) classifyError(err error) (fail bool, msg string) {
 	return true, err.Error()
 }
 
-// requestContext 为单次上游请求构造带超时的 context:优先渠道级 timeout,
-// 否则用全局 cfg.UpstreamTimeout;两者都 <=0 时原样返回(不设超时)。
-func (r *Router) requestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		timeout = r.cfg.UpstreamTimeout
-	}
-	if timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, timeout)
-}
-
-// timeout 为渠道级超时;<=0 时回退到全局 cfg.UpstreamTimeout(再 <=0 则不设超时)
+// doOnce 单次上游请求(非流式)。
+// timeout 为渠道级超时;<=0 时回退到全局 cfg.NonStreamTimeout(再 <=0 则不设超时)。
+// 该超时约束整个非流式请求:首次响应 + 读取完整响应体(默认 5 分钟)。
 func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey, authHeader string, timeout time.Duration) *Result {
 	start := time.Now()
-	reqCtx, cancel := r.requestContext(ctx, timeout)
+	total := timeout
+	if total <= 0 {
+		total = r.cfg.NonStreamTimeout
+	}
+	reqCtx, cancel := context.WithCancel(ctx)
+	if total > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, total)
+	}
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
@@ -225,25 +223,27 @@ func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey,
 	req.Header.Set("Accept", "application/json, text/event-stream")
 
 	resp, err := r.client.Do(req)
-	latency := time.Since(start).Milliseconds()
+	firstMs := time.Since(start).Milliseconds()
 	if err != nil {
-		return &Result{ChannelFail: true, ErrorMessage: err.Error(), LatencyMs: latency}
+		return &Result{ChannelFail: true, ErrorMessage: err.Error(), LatencyMs: firstMs, FirstResponseMs: firstMs}
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		return &Result{ChannelFail: true, ErrorMessage: err.Error(), LatencyMs: latency}
+		return &Result{ChannelFail: true, ErrorMessage: err.Error(), LatencyMs: latency, FirstResponseMs: firstMs}
 	}
 	if len(bodyBytes) >= 64<<20 {
 		// 响应体超限,视为渠道失败(避免截断 JSON 返回给客户端)
-		return &Result{ChannelFail: true, ErrorMessage: "upstream response too large (>64MB)", LatencyMs: latency}
+		return &Result{ChannelFail: true, ErrorMessage: "upstream response too large (>64MB)", LatencyMs: latency, FirstResponseMs: firstMs}
 	}
 	res := &Result{
-		Status:      resp.StatusCode,
-		Body:        bodyBytes,
-		LatencyMs:   latency,
-		ChannelFail: isChannelFailure(resp.StatusCode, nil),
-		BizError:    resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests,
+		Status:          resp.StatusCode,
+		Body:            bodyBytes,
+		LatencyMs:       latency,
+		FirstResponseMs: firstMs,
+		ChannelFail:     isChannelFailure(resp.StatusCode, nil),
+		BizError:        resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests,
 	}
 	res.Usage = parseUsage(bodyBytes)
 	return res
