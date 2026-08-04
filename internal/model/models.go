@@ -11,7 +11,9 @@ type Channel struct {
 	AuthHeader    string    `json:"auth_header"` // 自定义鉴权头名,默认 Authorization
 	Priority      int       `json:"priority"`    // 越小越优先
 	Enabled       bool      `json:"enabled"`
-	Status        string    `json:"status"` // normal / cooldown
+	TimeoutMs     int64     `json:"timeout_ms"`  // 渠道级上游请求超时(毫秒),0 = 使用全局 upstream_timeout
+	CooldownMs    int64     `json:"cooldown_ms"` // 渠道级冷静时长(毫秒),0 = 使用全局 cooldown_duration
+	Status        string    `json:"status"`      // normal / cooldown
 	CooldownUntil time.Time `json:"cooldown_until"`
 	FailureCount  int       `json:"failure_count"`
 	LastError     string    `json:"last_error"`
@@ -24,8 +26,8 @@ type Model struct {
 	ID             int64     `json:"id"`
 	ModelID        string    `json:"model_id"` // 如 gpt-4o
 	DisplayName    string    `json:"display_name"`
-	PriceInput     *float64  `json:"price_input"`     // 元/百万 token,可空
-	PriceOutput    *float64  `json:"price_output"`    // 元/百万 token,可空
+	PriceInput     *float64  `json:"price_input"`      // 元/百万 token,可空
+	PriceOutput    *float64  `json:"price_output"`     // 元/百万 token,可空
 	PriceCacheRead *float64  `json:"price_cache_read"` // 缓存读取价,元/百万 token,可空
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -37,7 +39,7 @@ type ChannelModel struct {
 	ChannelID         int64     `json:"channel_id"`
 	ModelID           int64     `json:"model_id"`
 	UpstreamModelName string    `json:"upstream_model_name"` // 空=同名透传
-	Priority          int       `json:"priority"`           // 模型级优先级,越小越优先;默认继承渠道全局优先级
+	Priority          int       `json:"priority"`            // 模型级优先级,越小越优先;默认继承渠道全局优先级
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -46,8 +48,8 @@ type APIKey struct {
 	ID         int64     `json:"id"`
 	Name       string    `json:"name"`
 	KeyHash    string    `json:"-"`
-	KeyPrefix  string    `json:"key_prefix"`  // 明文前缀 8 位用于展示
-	KeySecret  string    `json:"key_secret"`  // 完整密钥明文(本地自用,允许随时查看/复制)
+	KeyPrefix  string    `json:"key_prefix"` // 明文前缀 8 位用于展示
+	KeySecret  string    `json:"key_secret"` // 完整密钥明文(本地自用,允许随时查看/复制)
 	Enabled    bool      `json:"enabled"`
 	UsageCount int64     `json:"usage_count"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -69,8 +71,9 @@ type RequestLog struct {
 	RequestID        string    `json:"request_id"`
 	ChannelID        int64     `json:"channel_id"`
 	ChannelName      string    `json:"channel_name"`
-	Model            string    `json:"model"`
-	Status           string    `json:"status"` // success / fail / biz_error / retry_success
+	Model            string    `json:"model"`          // 客户端请求的模型
+	UpstreamModel    string    `json:"upstream_model"` // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
+	Status           string    `json:"status"`         // success / fail / biz_error / retry_success
 	LatencyMs        int64     `json:"latency_ms"`
 	PromptTokens     int64     `json:"prompt_tokens"`
 	CompletionTokens int64     `json:"completion_tokens"`

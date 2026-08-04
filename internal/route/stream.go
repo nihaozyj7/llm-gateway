@@ -22,8 +22,11 @@ type StreamResult struct {
 
 // doStreamOnce 单次流式转发:透传 SSE,同时截获 usage
 // 首包前失败返回 ChannelFail=true(调用方可降级重试);已开始输出则不再重试
-func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target string, body []byte, apiKey, authHeader string) *StreamResult {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+// timeout 为渠道级超时;<=0 时回退到全局 cfg.UpstreamTimeout(再 <=0 则不设超时)
+func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target string, body []byte, apiKey, authHeader string, timeout time.Duration) *StreamResult {
+	reqCtx, cancel := r.requestContext(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return &StreamResult{ChannelFail: true, ErrorMessage: err.Error()}
 	}
@@ -121,9 +124,9 @@ func parseStreamUsage(dataLine string) *Usage {
 	}
 	var chunk struct {
 		Usage struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-			TotalTokens      int64 `json:"total_tokens"`
+			PromptTokens        int64 `json:"prompt_tokens"`
+			CompletionTokens    int64 `json:"completion_tokens"`
+			TotalTokens         int64 `json:"total_tokens"`
 			PromptTokensDetails struct {
 				CachedTokens int64 `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -167,14 +170,14 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 		if cand.UpstreamModelName != "" {
 			sendBody = ApplyModelMapping(body, cand.UpstreamModelName)
 		}
-		res := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader)
+		res := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 		attempts++
 		if !res.ChannelFail {
 			return cand, res, attempts, nil // 已开始输出或成功
 		}
 		// 首包前失败:重试同一渠道一次
 		if r.cfg.RetrySameChannel {
-			res2 := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader)
+			res2 := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 			attempts++
 			if !res2.ChannelFail {
 				return cand, res2, attempts, nil
@@ -182,7 +185,7 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 			res = res2
 		}
 		// 降级到下一渠道
-		r.markChannelFail(cand.ChannelID, &Result{ChannelFail: true, ErrorMessage: res.ErrorMessage})
+		r.markChannelFail(cand, &Result{ChannelFail: true, ErrorMessage: res.ErrorMessage})
 	}
 	last := &StreamResult{ChannelFail: true, ErrorMessage: "all channels failed for stream request"}
 	return nil, last, attempts, nil

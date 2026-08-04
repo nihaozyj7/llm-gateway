@@ -126,6 +126,20 @@
               <input v-model="form.auth_header" placeholder="Authorization" class="w-full px-4 py-3 rounded input-field text-sm mono-text" />
             </div>
           </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">超时(毫秒)</label>
+              <input v-model.number="form.timeout_ms" type="number" min="0" placeholder="0 = 全局(默认 60000)"
+                class="w-full px-4 py-3 rounded input-field text-sm mono-text" />
+              <p class="text-[10px] text-[#525252] mt-1">上游请求超时,留空或 0 使用全局配置</p>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">冷静期(毫秒)</label>
+              <input v-model.number="form.cooldown_ms" type="number" min="0" placeholder="0 = 全局(默认 600000)"
+                class="w-full px-4 py-3 rounded input-field text-sm mono-text" />
+              <p class="text-[10px] text-[#525252] mt-1">连续失败后冷静时长,留空或 0 使用全局配置</p>
+            </div>
+          </div>
           <div class="flex gap-4 pt-4">
             <button type="button" @click="showModal = false" class="flex-1 py-3 text-sm font-bold rounded border border-[#262626] hover:bg-[#1a1a1a]">取消</button>
             <button type="submit" class="flex-1 py-3 text-sm font-bold rounded btn-primary">保存</button>
@@ -146,21 +160,24 @@ const channels = ref([])
 const testing = ref(0)
 const testResult = ref(null)
 const showModal = ref(false)
-const form = ref({ id: null, name: '', base_url: '', api_key: '', auth_header: 'Authorization', priority: 0, enabled: true })
+const form = ref({ id: null, name: '', base_url: '', api_key: '', auth_header: 'Authorization', priority: 0, enabled: true, timeout_ms: 0, cooldown_ms: 0 })
 
 async function load() {
   const data = await api.listChannels()
   channels.value = data.channels
 }
 function openCreate() {
-  form.value = { id: null, name: '', base_url: '', api_key: '', auth_header: 'Authorization', priority: 0, enabled: true, masked_key: '' }
+  form.value = { id: null, name: '', base_url: '', api_key: '', auth_header: 'Authorization', priority: 0, enabled: true, timeout_ms: 0, cooldown_ms: 0, masked_key: '' }
   showModal.value = true
 }
 function edit(c) {
-  form.value = { ...c, api_key: '', auth_header: c.auth_header || 'Authorization', masked_key: c.api_key }
+  form.value = { ...c, api_key: '', auth_header: c.auth_header || 'Authorization', masked_key: c.api_key, timeout_ms: c.timeout_ms || 0, cooldown_ms: c.cooldown_ms || 0 }
   showModal.value = true
 }
 async function save() {
+  // 空输入兜底:转成数字,避免提交 "" 导致后端 int64 解码失败
+  form.value.timeout_ms = parseInt(form.value.timeout_ms, 10) || 0
+  form.value.cooldown_ms = parseInt(form.value.cooldown_ms, 10) || 0
   if (form.value.id) await api.updateChannel(form.value.id, form.value)
   else await api.createChannel(form.value)
   showModal.value = false

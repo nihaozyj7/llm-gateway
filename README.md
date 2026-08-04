@@ -92,14 +92,20 @@ go build -o gateway.exe ./cmd/gateway
 | listen | `:8080` | 监听地址 |
 | db_path | `./.data/gateway.db` | SQLite 数据库文件路径 |
 | data_dir | `.data` | 数据目录 |
-| cooldown_duration | 10m | 渠道冷静时长(连续失败达到阈值后) |
+| cooldown_duration | 10m | 渠道冷静时长(连续失败达到阈值后)。**单位纳秒(ns)** |
 | cooldown_threshold | 1 | 连续失败多少次触发冷静 |
-| upstream_timeout | 60s | 上游请求超时 |
+| upstream_timeout | 60s | 上游请求超时。**单位纳秒(ns)** |
 | max_attempts_per_request | 0 | 单请求最多尝试渠道数(0 = 不限) |
 | retry_same_channel | true | 失败后是否重试同一渠道一次 |
 | log_payloads | true | 是否记录请求/响应体到日志 |
 | open_browser | true | 启动后是否自动打开浏览器管理界面(设为 false 可关闭) |
 | admin_username / admin_password / session_secret | — | 旧版登录遗留字段,已不再使用,可保留或删除 |
+
+> **时间单位说明**:`cooldown_duration` 与 `upstream_timeout` 的数值单位为**纳秒(ns)**(Go `time.Duration` 的底层单位),**只接受数字写法**,不要写 `"60s"` 这类带引号的字符串,否则启动会报错。
+> 与秒的换算:**1 秒 = 1,000,000,000 纳秒**;1 分钟 = 60,000,000,000 纳秒。
+> 默认值等价关系:60s = `60000000000`;10m = `600000000000`(即当前 `config.json` 中的写法)。
+>
+> **渠道级超时/冷静期**:渠道的创建/编辑弹窗支持按渠道单独配置「超时(ms)」与「冷静期(ms)」,单位**毫秒**,填 `0`(或留空)表示沿用上表全局配置;超时对普通请求与流式(SSE)请求同样生效。
 
 ## 使用流程
 

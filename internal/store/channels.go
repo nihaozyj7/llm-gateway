@@ -8,13 +8,13 @@ import (
 	"gateway/internal/model"
 )
 
-const channelCols = "id, name, base_url, api_key, auth_header, priority, enabled, status, cooldown_until, failure_count, last_error, created_at, updated_at"
+const channelCols = "id, name, base_url, api_key, auth_header, priority, enabled, timeout_ms, cooldown_ms, status, cooldown_until, failure_count, last_error, created_at, updated_at"
 
 func scanChannel(row interface{ Scan(...any) error }) (*model.Channel, error) {
 	var c model.Channel
 	var enabled, cooldownUntil, createdAt, updatedAt int64
 	err := row.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.AuthHeader, &c.Priority,
-		&enabled, &c.Status, &cooldownUntil, &c.FailureCount, &c.LastError, &createdAt, &updatedAt)
+		&enabled, &c.TimeoutMs, &c.CooldownMs, &c.Status, &cooldownUntil, &c.FailureCount, &c.LastError, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -56,9 +56,9 @@ func (s *Store) GetChannel(id int64) (*model.Channel, error) {
 // CreateChannel 新建渠道
 func (s *Store) CreateChannel(c *model.Channel) (int64, error) {
 	now := time.Now()
-	res, err := s.db.Exec(`INSERT INTO channels (name, base_url, api_key, auth_header, priority, enabled, status, cooldown_until, failure_count, last_error, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'normal', 0, 0, '', ?, ?)`,
-		c.Name, c.BaseURL, c.APIKey, c.AuthHeader, c.Priority, boolInt(c.Enabled), ts(now), ts(now))
+	res, err := s.db.Exec(`INSERT INTO channels (name, base_url, api_key, auth_header, priority, enabled, timeout_ms, cooldown_ms, status, cooldown_until, failure_count, last_error, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'normal', 0, 0, '', ?, ?)`,
+		c.Name, c.BaseURL, c.APIKey, c.AuthHeader, c.Priority, boolInt(c.Enabled), c.TimeoutMs, c.CooldownMs, ts(now), ts(now))
 	if err != nil {
 		return 0, err
 	}
@@ -67,9 +67,9 @@ func (s *Store) CreateChannel(c *model.Channel) (int64, error) {
 
 // UpdateChannel 更新渠道
 func (s *Store) UpdateChannel(c *model.Channel) error {
-	_, err := s.db.Exec(`UPDATE channels SET name=?, base_url=?, api_key=?, auth_header=?, priority=?, enabled=?, updated_at=?
+	_, err := s.db.Exec(`UPDATE channels SET name=?, base_url=?, api_key=?, auth_header=?, priority=?, enabled=?, timeout_ms=?, cooldown_ms=?, updated_at=?
 		WHERE id=?`,
-		c.Name, c.BaseURL, c.APIKey, c.AuthHeader, c.Priority, boolInt(c.Enabled), ts(time.Now()), c.ID)
+		c.Name, c.BaseURL, c.APIKey, c.AuthHeader, c.Priority, boolInt(c.Enabled), c.TimeoutMs, c.CooldownMs, ts(time.Now()), c.ID)
 	return err
 }
 

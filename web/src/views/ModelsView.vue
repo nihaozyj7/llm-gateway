@@ -46,28 +46,30 @@
                 <div v-if="m.display_name" class="text-[10px] text-[#737373]">{{ m.display_name }}</div>
               </td>
               <td class="px-4 py-4">
-                <div class="flex flex-wrap gap-2">
-                  <span v-for="(ch, i) in m.channels" :key="ch.channel_id"
-                    draggable="true"
-                    @dragstart="onDragStart($event, m, i)"
-                    @dragover.prevent
-                    @drop="onDrop($event, m, i)"
-                    @dragend="onDragEnd"
-                    title="拖动可调整优先级"
-                    class="px-2 py-1 rounded flex items-center gap-2 text-[11px] cursor-grab select-none"
-                    :class="i === 0 ? 'bg-[#262626] border border-[#333]' : 'bg-[#1a1a1a] border border-[#262626] opacity-60'">
-                    <span class="w-4 h-4 bg-white/10 rounded text-[8px] font-bold flex items-center justify-center">{{ i + 1 }}</span>
-                    <span>{{ ch.channel_name }}</span>
-                    <span v-if="ch.model_priority === 0" class="text-[8px] text-[#737373] border border-[#333] rounded px-1 leading-tight" title="未单独调整,跟随渠道全局优先级">继承</span>
-                  </span>
+                <div class="flex flex-wrap items-center">
+                  <template v-for="(ch, i) in m.channels" :key="ch.channel_id">
+                    <span
+                      draggable="true"
+                      @dragstart="onDragStart($event, m, i)"
+                      @dragover.prevent
+                      @drop="onDrop($event, m, i)"
+                      @dragend="onDragEnd"
+                      title="拖动可调整优先级"
+                      class="px-2 py-1 rounded inline-flex items-center gap-1.5 text-[11px] cursor-grab select-none"
+                      :class="i === 0 ? 'bg-[#262626] border border-[#333]' : 'bg-[#1a1a1a] border border-[#262626] opacity-60'">
+                      <span>{{ ch.channel_name }}</span>
+                      <span v-if="ch.model_priority === 0" class="text-[8px] text-[#737373] border border-[#333] rounded px-1 leading-tight" title="未单独调整,跟随渠道全局优先级">继承</span>
+                    </span>
+                    <span v-if="i < m.channels.length - 1" class="mx-1.5 text-[#404040] select-none">→</span>
+                  </template>
                   <span v-if="!m.channels.length" class="text-xs text-[#a3a3a3]">--</span>
                 </div>
-                <div class="text-[10px] text-[#525252] mt-1">数字越小优先级越高,拖动调整仅对该模型生效(渠道自身优先级为默认值,可到模型页按需调整)</div>
+                <div class="text-[10px] text-[#525252] mt-1">箭头方向即请求优先级(最左最优先),拖动渠道可调整顺序,仅对该模型生效</div>
               </td>
               <td class="px-4 py-4 font-mono text-xs">
                 <template v-if="hasMapping(m)">
                   <span v-for="(ch, i) in m.channels.filter(c => c.upstream_model_name && c.upstream_model_name !== m.model_id)" :key="i"
-                    class="block">{{ m.model_id }} <span class="text-[#737373]">→</span> <span class="text-blue-400">{{ ch.upstream_model_name }}</span></span>
+                    class="block">{{ ch.channel_name }} <span class="text-[#737373]">→</span> <span class="text-blue-400">{{ ch.upstream_model_name }}</span></span>
                 </template>
                 <span v-else class="text-[#a3a3a3] tracking-tight">--</span>
               </td>

@@ -121,9 +121,11 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		})
 		logEntry.Status = "fail"
 		logEntry.Error = err.Error()
+		fillUpstreamModel(logEntry, modelID, nil)
 		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
 		return
 	}
+	fillUpstreamModel(logEntry, modelID, cand)
 	if res.BizError {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.Status)
@@ -184,9 +186,11 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 		}
 		logEntry.Status = "fail"
 		logEntry.Error = err.Error()
+		fillUpstreamModel(logEntry, modelID, nil)
 		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
 		return
 	}
+	fillUpstreamModel(logEntry, modelID, cand)
 	if res == nil {
 		return
 	}
@@ -298,6 +302,15 @@ func firstLine(b []byte) string {
 		s = s[:300]
 	}
 	return s
+}
+
+// fillUpstreamModel 记录实际转发到上游的模型名:渠道配置了映射则用映射名,否则与请求模型相同
+func fillUpstreamModel(e *storeLogEntry, modelID string, cand *route.ChannelCandidate) {
+	if cand != nil && cand.UpstreamModelName != "" {
+		e.UpstreamModel = cand.UpstreamModelName
+	} else {
+		e.UpstreamModel = modelID
+	}
 }
 
 var _ = log.Printf

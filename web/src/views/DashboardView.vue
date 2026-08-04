@@ -95,7 +95,10 @@
                 <td class="p-4 font-mono text-xs text-[#a3a3a3]">{{ log.source_ip }}</td>
                 <td class="p-4">
                   <div class="text-xs font-medium uppercase tracking-tighter">{{ log.channel_name || '--' }}</div>
-                  <div class="text-[11px] font-mono text-[#a3a3a3]">{{ log.model }}</div>
+                  <div class="text-[11px] font-mono text-[#a3a3a3]">
+                    <template v-if="log.upstream_model && log.upstream_model !== log.model">{{ log.model }} <span class="text-[#737373]">→</span> <span class="text-blue-400">{{ log.upstream_model }}</span></template>
+                    <template v-else>{{ log.model }}</template>
+                  </div>
                 </td>
                 <td class="p-4"><StatusBadge :text="badgeText(log.status)" :type="badgeType(log.status)" /></td>
                 <td class="p-4 font-mono text-xs">{{ (log.latency_ms / 1000).toFixed(2) }}s</td>

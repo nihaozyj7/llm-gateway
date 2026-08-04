@@ -47,9 +47,8 @@ func NewRouter(st *store.Store, cfg *config.Config) *Router {
 	return &Router{
 		store: st,
 		cfg:   cfg,
-		client: &http.Client{
-			Timeout: cfg.UpstreamTimeout,
-		},
+		// 超时不在此处全局设置:改为按渠道/请求通过 context 控制(支持渠道级超时)
+		client: &http.Client{},
 	}
 }
 
@@ -62,6 +61,8 @@ type ChannelCandidate struct {
 	AuthHeader        string
 	UpstreamModelName string
 	Status            string
+	Timeout           time.Duration // 渠道级超时(0 = 使用全局 upstream_timeout)
+	Cooldown          time.Duration // 渠道级冷静时长(0 = 使用全局 cooldown_duration)
 }
 
 // PickChannels 选出目标模型的候选渠道(启用且未冷静,按优先级排序)
@@ -104,6 +105,8 @@ func (r *Router) PickChannels(ctx context.Context, modelID string) ([]*ChannelCa
 			AuthHeader:        ch.AuthHeader,
 			UpstreamModelName: ref.UpstreamModelName,
 			Status:            ch.Status,
+			Timeout:           time.Duration(ch.TimeoutMs) * time.Millisecond,
+			Cooldown:          time.Duration(ch.CooldownMs) * time.Millisecond,
 		})
 	}
 	// 已按 priority ASC 排序(见 ListModelsWithChannels 的 ORDER BY)
@@ -189,10 +192,24 @@ func (r *Router) classifyError(err error) (fail bool, msg string) {
 	return true, err.Error()
 }
 
-// doOnce 单次上游请求(非流式),返回结果
-func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey, authHeader string) *Result {
+// requestContext 为单次上游请求构造带超时的 context:优先渠道级 timeout,
+// 否则用全局 cfg.UpstreamTimeout;两者都 <=0 时原样返回(不设超时)。
+func (r *Router) requestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = r.cfg.UpstreamTimeout
+	}
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// timeout 为渠道级超时;<=0 时回退到全局 cfg.UpstreamTimeout(再 <=0 则不设超时)
+func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey, authHeader string, timeout time.Duration) *Result {
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	reqCtx, cancel := r.requestContext(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return &Result{ChannelFail: true, ErrorMessage: err.Error()}
 	}
@@ -236,9 +253,9 @@ func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey,
 func parseUsage(body []byte) *Usage {
 	var payload struct {
 		Usage struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-			TotalTokens      int64 `json:"total_tokens"`
+			PromptTokens        int64 `json:"prompt_tokens"`
+			CompletionTokens    int64 `json:"completion_tokens"`
+			TotalTokens         int64 `json:"total_tokens"`
 			PromptTokensDetails struct {
 				CachedTokens int64 `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -289,7 +306,7 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 		if cand.UpstreamModelName != "" {
 			sendBody = ApplyModelMapping(body, cand.UpstreamModelName)
 		}
-		res := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader)
+		res := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 		attempts++
 		if res.BizError {
 			return cand, res, attempts, nil // 业务错误:直接返回,不降级
@@ -299,7 +316,7 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 		}
 		// 渠道失败:重试同一渠道一次
 		if r.cfg.RetrySameChannel && attempts < maxAttempts {
-			res2 := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader)
+			res2 := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 			attempts++
 			if res2.BizError {
 				return cand, res2, attempts, nil
@@ -310,26 +327,30 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 			res = res2
 		}
 		// 记录渠道失败并降级
-		r.markChannelFail(cand.ChannelID, res)
+		r.markChannelFail(cand, res)
 	}
 	// 全部失败:返回最后一次错误
 	last := &Result{ChannelFail: true, ErrorMessage: "all channels failed"}
 	return nil, last, attempts, nil
 }
 
-// markChannelFail 渠道失败计数,达阈值进入冷静
-func (r *Router) markChannelFail(channelID int64, res *Result) {
+// markChannelFail 渠道失败计数,达阈值进入冷静(冷静时长优先渠道级配置)
+func (r *Router) markChannelFail(cand *ChannelCandidate, res *Result) {
 	msg := res.ErrorMessage
 	if msg == "" {
 		msg = fmt.Sprintf("HTTP %d", res.Status)
 	}
-	count, err := r.store.IncrementChannelFailure(channelID, msg)
+	count, err := r.store.IncrementChannelFailure(cand.ChannelID, msg)
 	if err != nil {
 		return
 	}
 	if count >= r.cfg.CooldownThreshold {
-		until := time.Now().Add(r.cfg.CooldownDuration)
-		_ = r.store.SetChannelStatus(channelID, "cooldown", until, msg)
+		cooldown := r.cfg.CooldownDuration
+		if cand.Cooldown > 0 {
+			cooldown = cand.Cooldown
+		}
+		until := time.Now().Add(cooldown)
+		_ = r.store.SetChannelStatus(cand.ChannelID, "cooldown", until, msg)
 	}
 }
 

@@ -49,6 +49,10 @@ func (h *AdminHandler) handleChannels(w http.ResponseWriter, r *http.Request) {
 		if !c.Enabled {
 			c.Enabled = true // 新建渠道默认启用
 		}
+		if c.TimeoutMs < 0 || c.CooldownMs < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "timeout_ms/cooldown_ms 不能为负数(0 = 使用全局配置)"})
+			return
+		}
 		id, err := h.store.CreateChannel(&c)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -113,6 +117,10 @@ func (h *AdminHandler) handleChannelByID(w http.ResponseWriter, r *http.Request)
 		c.ID = id
 		if c.AuthHeader == "" {
 			c.AuthHeader = "Authorization"
+		}
+		if c.TimeoutMs < 0 || c.CooldownMs < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "timeout_ms/cooldown_ms 不能为负数(0 = 使用全局配置)"})
+			return
 		}
 		if c.APIKey == "" || strings.Contains(c.APIKey, "***") {
 			// 留空或遮罩值表示不修改密钥

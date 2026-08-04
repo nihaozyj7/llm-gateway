@@ -41,6 +41,8 @@ func (s *Store) migrate() error {
 			auth_header TEXT NOT NULL DEFAULT 'Authorization',
 			priority INTEGER NOT NULL DEFAULT 0,
 			enabled INTEGER NOT NULL DEFAULT 1,
+			timeout_ms INTEGER NOT NULL DEFAULT 0,
+			cooldown_ms INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'normal',
 			cooldown_until INTEGER NOT NULL DEFAULT 0,
 			failure_count INTEGER NOT NULL DEFAULT 0,
@@ -93,6 +95,7 @@ func (s *Store) migrate() error {
 			channel_id INTEGER NOT NULL DEFAULT 0,
 			channel_name TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
+			upstream_model TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT '',
 			latency_ms INTEGER NOT NULL DEFAULT 0,
 			prompt_tokens INTEGER NOT NULL DEFAULT 0,
@@ -148,6 +151,17 @@ func (s *Store) migrate() error {
 	}
 	// 旧库迁移:api_keys 补充 key_secret 列(明文密钥,本地自用可随时查看)
 	if err := ensureColumn(s.db, "api_keys", "key_secret", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	// 旧库迁移:channels 补充渠道级超时/冷静期列(毫秒,0 = 使用全局配置)
+	if err := ensureColumn(s.db, "channels", "timeout_ms", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if err := ensureColumn(s.db, "channels", "cooldown_ms", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	// 旧库迁移:request_logs 补充实际转发模型列(渠道映射后)
+	if err := ensureColumn(s.db, "request_logs", "upstream_model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	return s.migrateV1()
