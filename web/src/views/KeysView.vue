@@ -48,6 +48,7 @@
 
       <!-- 支持的接口 -->
       <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-3">当前支持的接口</label>
+      <p class="text-[11px] text-[#737373] leading-relaxed mb-3">网关为<b class="text-white/70">透传代理</b>,本身不聚合、不转换接口能力:以下入口只是透传的 OpenAI 风格接口,具体是否可用、支持哪些能力(如工具调用、多模态)取决于所关联的<b class="text-white/70">上游渠道本身</b>是否支持。</p>
       <div class="space-y-2">
         <div v-for="ep in endpoints" :key="ep.path" class="flex items-center gap-3 p-3 bg-[#1a1a1a] border border-[#262626] rounded">
           <span class="w-14 text-center text-[10px] font-bold px-2 py-1 rounded"
