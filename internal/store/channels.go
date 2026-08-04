@@ -32,7 +32,7 @@ func (s *Store) ListChannels() ([]*model.Channel, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*model.Channel
+	out := make([]*model.Channel, 0)
 	for rows.Next() {
 		c, err := scanChannel(rows)
 		if err != nil {

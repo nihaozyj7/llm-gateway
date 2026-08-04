@@ -37,7 +37,7 @@ func (s *Store) ListModels() ([]*model.Model, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*model.Model
+	out := make([]*model.Model, 0)
 	for rows.Next() {
 		m, err := scanModel(rows)
 		if err != nil {
@@ -127,7 +127,7 @@ func (s *Store) ListChannelModels(channelID int64) ([]*model.ChannelModel, error
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*model.ChannelModel
+	out := make([]*model.ChannelModel, 0)
 	for rows.Next() {
 		var cm model.ChannelModel
 		var createdAt int64
@@ -184,7 +184,11 @@ func (s *Store) ListModelsWithChannels() ([]*ModelWithChannels, error) {
 	}
 	out := make([]*ModelWithChannels, 0, len(models))
 	for _, m := range models {
-		out = append(out, &ModelWithChannels{Model: m, Channels: refs[m.ID]})
+		ch := refs[m.ID]
+		if ch == nil {
+			ch = []ChannelRef{}
+		}
+		out = append(out, &ModelWithChannels{Model: m, Channels: ch})
 	}
 	return out, rows.Err()
 }

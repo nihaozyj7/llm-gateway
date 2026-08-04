@@ -84,7 +84,7 @@ func (s *Store) QueryStat(table, periodPrefix, groupBy string, channelID int64, 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*model.StatRow
+	out := make([]*model.StatRow, 0)
 	for rows.Next() {
 		var r model.StatRow
 		if err := rows.Scan(&r.ChannelID, &r.ChannelName, &r.Model, &r.RequestCount, &r.SuccessCount,

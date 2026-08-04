@@ -55,7 +55,7 @@ func (s *Store) ListLogs(channelID *int64, modelFilter string, status string, ke
 		return nil, 0, err
 	}
 	defer rows.Close()
-	var out []*model.RequestLog
+	out := make([]*model.RequestLog, 0)
 	for rows.Next() {
 		l, err := scanLog(rows)
 		if err != nil {

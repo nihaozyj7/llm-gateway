@@ -29,7 +29,7 @@ func (s *Store) ListAPIKeys() ([]*model.APIKey, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*model.APIKey
+	out := make([]*model.APIKey, 0)
 	for rows.Next() {
 		k, err := scanAPIKey(rows)
 		if err != nil {
