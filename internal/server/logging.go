@@ -1,0 +1,57 @@
+package server
+
+import (
+	"time"
+
+	"gateway/internal/model"
+	"gateway/internal/route"
+)
+
+// storeLogEntry 日志记录中间态
+type storeLogEntry struct {
+	RequestID   string
+	ChannelID   int64
+	ChannelName string
+	Model       string
+	Status      string
+	Error       string
+	SourceIP    string
+	PayloadReq  string
+}
+
+// writeLog 落库日志 + 更新统计,并按模型价格计算成本
+func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs int64, respBody []byte, pt, ct, tt int64, httpStatus int) {
+	// 计算成本:按模型价格
+	var cost float64
+	m, _ := h.store.GetModelByID(e.Model)
+	if m != nil {
+		cost = route.Cost(pt, ct, m.PriceInput, m.PriceOutput)
+	}
+	payloadResp := ""
+	if h.cfg.LogPayloads && respBody != nil && len(respBody) < 64*1024 {
+		payloadResp = string(respBody)
+	}
+	if h.cfg.LogPayloads && len(e.PayloadReq) > 64*1024 {
+		e.PayloadReq = e.PayloadReq[:64*1024]
+	}
+	l := &model.RequestLog{
+		RequestTime:      start,
+		RequestID:        e.RequestID,
+		ChannelID:        e.ChannelID,
+		ChannelName:      e.ChannelName,
+		Model:            e.Model,
+		Status:           e.Status,
+		LatencyMs:        latencyMs,
+		PromptTokens:     pt,
+		CompletionTokens: ct,
+		TotalTokens:      tt,
+		Cost:             cost,
+		Error:            e.Error,
+		SourceIP:         e.SourceIP,
+		PayloadRequest:   e.PayloadReq,
+		PayloadResponse:  payloadResp,
+	}
+	if _, err := h.store.InsertLog(l); err == nil {
+		_ = h.store.RecordStat(l)
+	}
+}

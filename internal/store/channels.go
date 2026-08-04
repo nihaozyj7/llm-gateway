@@ -1,0 +1,125 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"gateway/internal/model"
+)
+
+const channelCols = "id, name, base_url, api_key, auth_header, priority, enabled, status, cooldown_until, failure_count, last_error, created_at, updated_at"
+
+func scanChannel(row interface{ Scan(...any) error }) (*model.Channel, error) {
+	var c model.Channel
+	var enabled, cooldownUntil, createdAt, updatedAt int64
+	err := row.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.AuthHeader, &c.Priority,
+		&enabled, &c.Status, &cooldownUntil, &c.FailureCount, &c.LastError, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.Enabled = enabled == 1
+	c.CooldownUntil = fromTS(cooldownUntil)
+	c.CreatedAt = fromTS(createdAt)
+	c.UpdatedAt = fromTS(updatedAt)
+	return &c, nil
+}
+
+// ListChannels 列出全部渠道(按优先级排序)
+func (s *Store) ListChannels() ([]*model.Channel, error) {
+	rows, err := s.db.Query("SELECT " + channelCols + " FROM channels ORDER BY priority ASC, id ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.Channel
+	for rows.Next() {
+		c, err := scanChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GetChannel 按 ID 取渠道
+func (s *Store) GetChannel(id int64) (*model.Channel, error) {
+	row := s.db.QueryRow("SELECT "+channelCols+" FROM channels WHERE id = ?", id)
+	c, err := scanChannel(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return c, err
+}
+
+// CreateChannel 新建渠道
+func (s *Store) CreateChannel(c *model.Channel) (int64, error) {
+	now := time.Now()
+	res, err := s.db.Exec(`INSERT INTO channels (name, base_url, api_key, auth_header, priority, enabled, status, cooldown_until, failure_count, last_error, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'normal', 0, 0, '', ?, ?)`,
+		c.Name, c.BaseURL, c.APIKey, c.AuthHeader, c.Priority, boolInt(c.Enabled), ts(now), ts(now))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateChannel 更新渠道
+func (s *Store) UpdateChannel(c *model.Channel) error {
+	_, err := s.db.Exec(`UPDATE channels SET name=?, base_url=?, api_key=?, auth_header=?, priority=?, enabled=?, updated_at=?
+		WHERE id=?`,
+		c.Name, c.BaseURL, c.APIKey, c.AuthHeader, c.Priority, boolInt(c.Enabled), ts(time.Now()), c.ID)
+	return err
+}
+
+// DeleteChannel 删除渠道(级联删除 channel_models)
+func (s *Store) DeleteChannel(id int64) error {
+	_, err := s.db.Exec("DELETE FROM channels WHERE id = ?", id)
+	return err
+}
+
+// SetChannelStatus 设置渠道状态(冷静/正常)与冷静截止时间
+func (s *Store) SetChannelStatus(id int64, status string, cooldownUntil time.Time, lastError string) error {
+	_, err := s.db.Exec("UPDATE channels SET status=?, cooldown_until=?, last_error=?, updated_at=? WHERE id=?",
+		status, ts(cooldownUntil), lastError, ts(time.Now()), id)
+	return err
+}
+
+// ResetChannelFailure 重置失败计数并恢复正常
+func (s *Store) ResetChannelFailure(id int64) error {
+	_, err := s.db.Exec("UPDATE channels SET status='normal', cooldown_until=0, failure_count=0, last_error='', updated_at=? WHERE id=?",
+		ts(time.Now()), id)
+	return err
+}
+
+// IncrementChannelFailure 失败计数 +1,返回新计数
+func (s *Store) IncrementChannelFailure(id int64, errMsg string) (int, error) {
+	res, err := s.db.Exec("UPDATE channels SET failure_count = failure_count + 1, last_error=?, updated_at=? WHERE id=?",
+		errMsg, ts(time.Now()), id)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return 0, fmt.Errorf("channel %d not found", id)
+	}
+	var count int
+	if err := s.db.QueryRow("SELECT failure_count FROM channels WHERE id = ?", id).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// RefreshCoolDowns 把已过期的冷静渠道恢复正常(启动与路由时惰性调用)
+func (s *Store) RefreshCoolDowns() error {
+	_, err := s.db.Exec("UPDATE channels SET status='normal', failure_count=0 WHERE status='cooldown' AND cooldown_until > 0 AND cooldown_until <= ?", ts(time.Now()))
+	return err
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

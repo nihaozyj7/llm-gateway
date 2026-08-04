@@ -1,0 +1,24 @@
+# Go
+*.exe
+*.exe~
+gateway
+gateway-linux
+
+# 运行数据
+.data/
+config.json
+
+# 前端
+web/node_modules/
+web/dist/
+
+# Superdesign 临时文件与设计导出
+.superdesign/tmp/
+.superdesign/designs/
+
+# Reasonix 会话元数据
+.reasonix/
+
+# 系统
+.DS_Store
+Thumbs.db

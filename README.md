@@ -1,0 +1,249 @@
+# 大模型转发网关(LLM Gateway)
+
+一个**轻量级大模型渠道管理 + OpenAI 兼容透明转发网关**,面向个人/小团队自用场景:统一管理多家大模型渠道,对外暴露一个 OpenAI 兼容的 API,客户端零改造直连。
+
+单文件二进制(前端已内嵌)+ SQLite 单文件数据库,一条命令即可启动,无需任何外部依赖。
+
+## 功能特性
+
+- **多渠道管理**:添加/编辑/删除渠道(base_url + api key),支持自定义鉴权头(如 `x-api-key`),渠道可启用/停用、设置全局优先级。
+- **模型聚合与同步**:调用渠道 `/models` 接口一键拉取模型列表,勾选关联;不同渠道的同名模型自动合并展示,支持"渠道内模型名"映射(网关模型名 ≠ 渠道实际模型名)。
+- **智能路由(核心)**:请求按渠道优先级分发;失败先重试同一渠道一次,仍失败则按优先级降级到下一渠道;连续失败触发**渠道冷静期**(默认 10 分钟),期间该渠道不参与路由,到期自动恢复,也可手动解除。
+- **OpenAI 兼容 API**:对外提供 `/v1/*` 接口(chat/completions、models 等),支持非流式与 SSE 流式,流式末尾 chunk 的 `usage` 会被截获计入统计。
+- **用量统计与成本估算**:每请求记录日志(token 用量、耗时、状态、错误),按渠道/模型/时间(日/小时)聚合;价格页可填模型单价(元/千 token),自动估算成本。
+- **API key 管理**:签发多把可命名、可撤销的网关密钥(SHA-256 哈希存储,明文仅创建时展示一次)。
+- **零依赖部署**:Go 单二进制(前端 embed)+ SQLite(纯 Go 驱动,免 CGO),Windows / Linux 交叉编译产物开箱即用。
+- **管理后台**:内置 Vue3 管理界面(渠道/模型/价格/统计看板/日志/API key),仅限本机访问,无需登录。
+
+## 与一般大模型网关(如 one-api、new-api)的区别
+
+本项目定位与常见的多用户、计费型网关(one-api/new-api 等)有本质不同:
+
+| 维度 | 本项目 | 一般网关(one-api/new-api 等) |
+|---|---|---|
+| 定位 | 个人/小团队**自用**,追求极简 | 面向多用户/团队,提供配额、计费、用户体系 |
+| 用户体系 | 无多用户;管理界面仅本机访问,不设登录;网关侧仅凭 API key 鉴权 | 多用户 + 角色权限 + 令牌配额 + 余额计费 |
+| 路由策略 | **优先级 + 同渠道重试 + 降级 + 渠道冷静期**(不做轮询,以最大化缓存命中率) | 通常为加权随机/轮询/负载均衡,侧重多用户公平分发 |
+| 转发行为 | **纯透传**:只替换 base_url / api key / 模型映射,不解析、不修改业务内容 | 部分网关会做协议转换、内容过滤、多模型拼接等 |
+| 计费 | 仅"成本估算"(按单价粗略预测),非精确计费 | 精确计费、余额扣减、充值系统 |
+| 部署形态 | 单二进制 + SQLite,一条命令启动,管理界面内嵌 | 多为前后端分离 + 外部数据库,部署较重 |
+| 适用场景 | 个人开发者聚合多个 API 渠道(如官方 + 中转),统一 key 给各种客户端用 | 团队共享、对外售卖 API 能力的场景 |
+
+简而言之:**本项目是"自用版智能路由转发器",不是"商业计费平台"**。如果你只需要把多个模型渠道聚合成一个 OpenAI 兼容入口,并希望优先走质量好/便宜的渠道、故障自动切换,本项目正合适;如果需要用户管理、充值计费、多租户配额,请选择 one-api/new-api 等成熟方案。
+
+## 快速开始
+
+### 方式一:下载二进制(推荐)
+
+从 [Releases](https://github.com/nihaozyj7/llm-gateway/releases) 下载对应平台二进制:
+
+- `gateway.exe` — Windows amd64
+- `gateway-linux` — Linux amd64(需要 `chmod +x gateway-linux`)
+
+### 方式二:从源码构建
+
+前置要求:Go 1.21+、Node.js 18+。
+
+```powershell
+# Windows(当前目录)
+./build.ps1
+
+# 交叉编译 Linux amd64
+./build.ps1 -Linux
+```
+
+脚本会依次:构建前端(`web/npm run build`)→ 编译 Go 单二进制。
+
+手动构建:
+
+```powershell
+cd web
+npm install
+npm run build          # 产物 web/dist(会被 embed 进二进制)
+cd ..
+go build -o gateway.exe ./cmd/gateway
+```
+
+> 注意:`//go:embed web/dist` 要求构建 Go 前 `web/dist` 已存在。
+
+### 启动
+
+```powershell
+./gateway.exe -config config.json
+```
+
+- 首次启动自动创建 `.data/gateway.db`(SQLite)与 `config.json`(使用默认配置)。
+- 默认监听 `:8080`,启动后自动打开浏览器进入管理后台(仅本机可访问,无需登录)。
+
+## 配置说明(config.json)
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| listen | `:8080` | 监听地址 |
+| db_path | `./.data/gateway.db` | SQLite 数据库文件路径 |
+| data_dir | `.data` | 数据目录 |
+| cooldown_duration | 10m | 渠道冷静时长(连续失败达到阈值后) |
+| cooldown_threshold | 1 | 连续失败多少次触发冷静 |
+| upstream_timeout | 60s | 上游请求超时 |
+| max_attempts_per_request | 0 | 单请求最多尝试渠道数(0 = 不限) |
+| retry_same_channel | true | 失败后是否重试同一渠道一次 |
+| log_payloads | true | 是否记录请求/响应体到日志 |
+| admin_username / admin_password / session_secret | — | 旧版登录遗留字段,已不再使用,可保留或删除 |
+
+## 使用流程
+
+1. **添加渠道**:管理后台 → 渠道管理 → 添加新渠道,填 base_url + api key。
+   - base_url 含不含 `/v1` 均可:网关按 `base_url + (客户端路径去掉 /v1 前缀)` 拼接(例:客户端 `POST /v1/chat/completions` → 上游 `${base_url}/chat/completions`)。
+   - 默认鉴权头 `Authorization: Bearer <key>`;特殊渠道可改自定义鉴权头(如 `x-api-key`)。
+2. **同步模型**:模型管理 → 从渠道同步模型(调用渠道 `/models` 接口),或手动添加。
+3. **关联渠道**:模型管理 → 关联渠道,设置"渠道内模型名"做映射(留空同名透传)。
+4. **设置优先级**:渠道的 priority 数字越小越优先;请求失败 → 重试同渠道一次 → 按优先级降级,连续失败进入冷静期。
+5. **签发 API key**:API Keys → 创建新密钥,客户端用它调用网关 `POST /v1/chat/completions`(OpenAI 兼容,支持 stream)。
+6. **配置价格**:价格设置 → 填写模型单价(元/千 token),日志与看板展示成本估算。
+
+客户端使用示例(OpenAI SDK 指向网关即可):
+
+```bash
+# curl 非流式
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-your-gateway-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"你好"}]}'
+
+# 流式
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-your-gateway-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"你好"}],"stream":true}'
+```
+
+Python OpenAI SDK:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="sk-your-gateway-key")
+resp = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "你好"}])
+print(resp.choices[0].message.content)
+```
+
+## 部署到 Linux 服务器
+
+```powershell
+# 在 Windows 开发机交叉编译
+./build.ps1 -Linux
+```
+
+将 `gateway-linux` 上传到服务器:
+
+```bash
+chmod +x gateway-linux
+./gateway-linux -config config.json
+```
+
+单文件 + SQLite,无任何依赖。建议用 systemd / supervisor 守护进程。
+
+## 架构
+
+```
+┌─────────────┐  /v1/* + API key   ┌──────────────────────────┐
+│  OpenAI 客户端 │ ───────────────────▶ │  网关(Go)                │
+└─────────────┘                    │  ├─ 鉴权(API key, SHA-256) │
+                                   │  ├─ 路由决策(优先级/冷静期) │
+                                   │  ├─ 透传代理(+重试/降级)    │
+                                   │  ├─ 统计记录(日志/聚合)     │
+                                   │  └─ 管理后台 API + Vue3 前端 │
+                                   └──────────┬───────────────┘
+                                              │ 替换 baseurl+apikey 原样转发
+                              ┌───────────────┴───────────────┐
+                              ▼              ▼               ▼
+                       渠道A(baseurl+key)  渠道B           渠道C…
+```
+
+## 开发
+
+### 目录结构
+
+```
+cmd/gateway/            入口:启动 HTTP 服务、初始化 DB、挂载前端
+internal/config/        配置加载与持久化
+internal/model/         SQLite 数据模型
+internal/store/         SQLite 存取层(渠道/模型/API key/日志/统计)
+internal/route/         路由决策核心(优先级/重试/降级/冷静期)+ 上游转发
+internal/server/        管理后台 API + 网关 /v1/* API + 日志中间件
+internal/sync/          渠道模型列表同步(/models 拉取)
+internal/stat/          统计聚合与成本计算
+web/                    Vue3 + Vite + Tailwind 前端(构建产物 embed)
+```
+
+技术选型:
+
+- 后端:Go 标准库 `net/http`(Go 1.22+ 方法路由),不引重型框架
+- 数据库:SQLite,纯 Go 驱动 `modernc.org/sqlite`(免 CGO,交叉编译友好)
+- 前端:Vue3 + Vite + Tailwind CSS + ECharts(统计看板)
+- 前端产物通过 `//go:embed` 打进二进制
+
+### 路由与冷静期逻辑
+
+```
+请求到达 /v1/* → 校验 API key → 解析目标 model
+→ 候选渠道 = {含该模型 && enabled && 未冷静} 按 priority 升序
+→ 取第一个渠道发送:
+    ├─ 成功 → 记录日志/用量 → 返回
+    ├─ 失败(连接错误/超时/5xx/429):
+    │    ├─ 第 1 次:重试同一渠道(重放请求体)
+    │    ├─ 仍失败 → failure_count+1,达到阈值则进入冷静(cooldown_until = now + cooldown_duration)
+    │    └─ 取下一个优先级渠道,重复上述流程
+    └─ 业务错误(其余 4xx)→ 直接返回客户端,不计渠道失败
+→ 全部渠道失败 → 返回最后一次错误
+冷静到期(惰性判断)→ 自动恢复;管理后台可手动解除
+```
+
+### 测试
+
+```powershell
+go test ./...          # 单元测试(路由决策、冷静期、成本计算、代理转发)
+```
+
+本地联调 mock:`.superdesign/mock-upstream.js` 提供 OpenAI 兼容上游(node 运行,监听 :9000),可用于验证转发/降级/流式。
+
+### 路由 API 一览
+
+管理接口(均限本机 loopback):
+
+```
+GET/POST  /api/admin/channels     渠道 CRUD
+GET/PATCH/DELETE /api/admin/channels/{id}
+GET/POST  /api/admin/models       模型管理
+POST      /api/admin/models/sync  从渠道同步模型
+GET/POST  /api/admin/keys         API key 管理
+GET       /api/admin/logs         请求日志
+GET       /api/admin/stats        聚合统计
+GET       /api/admin/dashboard    看板数据
+POST      /api/admin/test         渠道连通性测试
+```
+
+网关接口(API key 鉴权):
+
+```
+POST  /v1/chat/completions   对话补全(支持 stream:true)
+GET   /v1/models             聚合模型列表(所有启用渠道的模型并集)
+```
+
+## 安全注意事项
+
+- **管理界面仅限本机访问**:`/api/admin/*` 接口只接受 loopback(127.0.0.1 / ::1)请求,来自其他地址一律 403,不设账号密码。
+- 网关对外 API(`/v1/*`)不受此限制,依赖 API key 鉴权;若需将网关暴露到公网,请通过反向代理将管理端口与对外端口隔离。
+- 网关 API key 以 SHA-256 哈希存储,明文仅创建时展示一次;渠道 API key 在管理界面中遮罩展示。
+- `config.json` 含渠道凭据信息,勿提交到公开仓库(仓库 `.gitignore` 已默认忽略)。
+
+## 已知限制
+
+- 一期为单用户自用设计,无多用户/配额/余额体系。
+- 只支持 OpenAI 兼容上游(纯透传,不做协议转换)。
+- 重试可能造成重复计费(上游已计费但响应丢失时,透传网关无法避免)。
+- 成本为按单价粗略估算,非精确计费。
+- 一期未做 QPS 限流,仅做简单并发控制。
+
+## License
+
+MIT
