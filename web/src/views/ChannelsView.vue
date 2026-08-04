@@ -80,12 +80,6 @@
           </template>
         </div>
       </div>
-
-      <!-- 添加占位卡 -->
-      <div @click="openCreate" class="glass-card flex flex-col items-center justify-center p-12 border-dashed border-2 border-[#262626] hover:border-[#404040] hover:bg-[#111] transition-all cursor-pointer">
-        <Icon icon="lucide:plus" class="text-4xl text-[#262626] group-hover:text-[#737373]" />
-        <span class="text-[10px] uppercase font-bold tracking-[0.3em] text-[#404040] mt-3">点击快速添加</span>
-      </div>
     </div>
 
     <!-- 测试结果 -->

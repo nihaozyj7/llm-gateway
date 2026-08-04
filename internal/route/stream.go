@@ -222,6 +222,7 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 		res := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 		attempts++
 		if !res.ChannelFail {
+			_ = r.store.ClearChannelFailure(cand.ChannelID)
 			return cand, res, attempts, nil // 已开始输出或成功
 		}
 		// 首包前失败:重试同一渠道一次
@@ -229,6 +230,7 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 			res2 := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 			attempts++
 			if !res2.ChannelFail {
+				_ = r.store.ClearChannelFailure(cand.ChannelID)
 				return cand, res2, attempts, nil
 			}
 			res = res2

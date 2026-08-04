@@ -21,7 +21,7 @@ type Config struct {
 	AdminPassword string `json:"admin_password"`
 	// CooldownDuration 渠道冷静时长
 	CooldownDuration time.Duration `json:"cooldown_duration"`
-	// CooldownThreshold 连续失败多少次触发冷静
+	// CooldownThreshold 连续失败多少次触发冷静(默认 3:失败 1 次即冷却过于敏感)
 	CooldownThreshold int `json:"cooldown_threshold"`
 	// UpstreamTimeout 流式请求首次响应(TTFB)超时:仅对流式生效,
 	// 指请求发起后到收到第一个响应的时间;收到首包后不再受此限制。
@@ -52,7 +52,7 @@ func Default() *Config {
 		AdminUsername:         "admin",
 		AdminPassword:         "admin123",
 		CooldownDuration:      10 * time.Minute,
-		CooldownThreshold:     1,
+		CooldownThreshold:     3,
 		UpstreamTimeout:       60 * time.Second,
 		NonStreamTimeout:      5 * time.Minute,
 		StreamMaxDuration:     6 * time.Minute,

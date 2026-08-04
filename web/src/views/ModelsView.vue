@@ -60,11 +60,10 @@
                       <span>{{ ch.channel_name }}</span>
                       <span v-if="ch.model_priority === 0" class="text-[8px] text-[#737373] border border-[#333] rounded px-1 leading-tight" title="未单独调整,跟随渠道全局优先级">继承</span>
                     </span>
-                    <span v-if="i < m.channels.length - 1" class="mx-1.5 text-[#404040] select-none">→</span>
+                    <span v-if="i < m.channels.length - 1" class="text-[#737373] select-none">→</span>
                   </template>
                   <span v-if="!m.channels.length" class="text-xs text-[#a3a3a3]">--</span>
                 </div>
-                <div class="text-[10px] text-[#525252] mt-1">箭头方向即请求优先级(最左最优先),拖动渠道可调整顺序,仅对该模型生效</div>
               </td>
               <td class="px-4 py-4 font-mono text-xs">
                 <template v-if="hasMapping(m)">

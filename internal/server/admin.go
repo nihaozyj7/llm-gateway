@@ -33,6 +33,7 @@ func (h *AdminHandler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/keys", h.requireLocal(h.handleKeys))
 	mux.HandleFunc("/api/admin/keys/", h.requireLocal(h.handleKeyByID))
 	mux.HandleFunc("/api/admin/logs", h.requireLocal(h.handleLogs))
+	mux.HandleFunc("/api/admin/logs/clear", h.requireLocal(h.handleClearLogs))
 	mux.HandleFunc("/api/admin/logs/", h.requireLocal(h.handleLogByID))
 	mux.HandleFunc("/api/admin/stats", h.requireLocal(h.handleStats))
 	mux.HandleFunc("/api/admin/stats/reset", h.requireLocal(h.handleStatsReset))

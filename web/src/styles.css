@@ -29,6 +29,20 @@ body {
   border-bottom: 2px solid #ffffff;
 }
 
+/* 页面切换过渡:淡入 + 轻微上移,out-in 避免布局跳动 */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

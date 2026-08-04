@@ -57,4 +57,17 @@ func (h *AdminHandler) handleLogByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, l)
 }
 
+// POST /api/admin/logs/clear — 清空全部请求日志(统计数字保留)
+func (h *AdminHandler) handleClearLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if err := h.store.ClearLogs(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 var _ = json.Marshal

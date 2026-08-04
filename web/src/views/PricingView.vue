@@ -11,7 +11,7 @@
 
     <!-- 定价表 -->
     <div class="glass-card overflow-hidden mb-8">
-      <TableHeader title="全局模型定价表" show-refresh refresh-label="保存修改" @refresh="saveAll" />
+      <TableHeader title="全局模型定价表" show-refresh refresh-label="保存修改" :busy="saving" :saved="saved" @refresh="saveAll" />
       <div class="p-6 border-b bg-[#0e0e0e] flex flex-wrap gap-4 justify-between items-center">
         <div class="relative">
           <Icon icon="lucide:search" class="absolute left-3 top-1/2 -translate-y-1/2 text-[#404040]" />
@@ -89,6 +89,8 @@ const models = ref([])
 const keyword = ref('')
 const series = ref('')
 const prices = ref({})
+const saving = ref(false)
+const saved = ref(false)
 
 const filtered = computed(() => {
   let list = models.value
@@ -105,16 +107,27 @@ function initPrices() {
 }
 
 async function saveAll() {
-  for (const m of models.value) {
-    const p = prices.value[m.id]
-    const input = p.input === '' ? null : Number(p.input)
-    const cache = p.cache === '' ? null : Number(p.cache)
-    const output = p.output === '' ? null : Number(p.output)
-    if (input !== m.price_input || cache !== m.price_cache_read || output !== m.price_output) {
-      await api.updatePrice(m.id, input, output, cache)
+  if (saving.value) return
+  saving.value = true
+  saved.value = false
+  try {
+    for (const m of models.value) {
+      const p = prices.value[m.id]
+      const input = p.input === '' ? null : Number(p.input)
+      const cache = p.cache === '' ? null : Number(p.cache)
+      const output = p.output === '' ? null : Number(p.output)
+      if (input !== m.price_input || cache !== m.price_cache_read || output !== m.price_output) {
+        await api.updatePrice(m.id, input, output, cache)
+      }
     }
+    await load()
+    saved.value = true
+    setTimeout(() => { saved.value = false }, 1500)
+  } catch (e) {
+    alert('保存失败: ' + (e.message || e))
+  } finally {
+    saving.value = false
   }
-  await load()
 }
 function resetPrice(m) {
   prices.value[m.id] = { input: '', cache: '', output: '' }

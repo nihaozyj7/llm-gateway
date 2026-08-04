@@ -2,7 +2,11 @@
   <div class="min-h-screen flex flex-col">
     <PageHeader :active="active" />
     <main class="flex-1 max-w-[1440px] mx-auto w-full px-6 py-10">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <Transition name="page" mode="out-in">
+          <component :is="Component" :key="route.path" />
+        </Transition>
+      </router-view>
     </main>
     <PageFooter />
   </div>

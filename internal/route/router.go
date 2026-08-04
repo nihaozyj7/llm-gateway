@@ -312,6 +312,8 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 			return cand, res, attempts, nil // 业务错误:直接返回,不降级
 		}
 		if !res.ChannelFail {
+			// 成功:清零该渠道失败计数,使冷却阈值为"连续失败 N 次"
+			_ = r.store.ClearChannelFailure(cand.ChannelID)
 			return cand, res, attempts, nil // 成功
 		}
 		// 渠道失败:重试同一渠道一次
@@ -322,6 +324,7 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 				return cand, res2, attempts, nil
 			}
 			if !res2.ChannelFail {
+				_ = r.store.ClearChannelFailure(cand.ChannelID)
 				return cand, res2, attempts, nil // 重试成功
 			}
 			res = res2

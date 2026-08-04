@@ -51,6 +51,7 @@ export const api = {
     return req(`/api/admin/logs?${qs}`)
   },
   getLog: (id) => req(`/api/admin/logs/${id}`),
+  clearLogs: () => req('/api/admin/logs/clear', { method: 'POST' }),
 
   // 统计
   stats: (params) => {

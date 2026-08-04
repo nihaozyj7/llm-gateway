@@ -10,6 +10,9 @@
         <button @click="resetStats" class="text-xs px-4 py-2 rounded uppercase border border-[#262626] hover:bg-[#1a1a1a] text-[#a3a3a3] hover:text-white">
           <Icon icon="lucide:rotate-ccw" class="inline mr-1" />重置统计
         </button>
+        <button @click="clearLogs" class="text-xs px-4 py-2 rounded uppercase border border-[#262626] hover:bg-[#1a1a1a] text-[#a3a3a3] hover:text-white">
+          <Icon icon="lucide:trash-2" class="inline mr-1" />清除日志
+        </button>
         <button @click="load" class="text-xs btn-primary px-4 py-2 rounded uppercase">刷新</button>
       </div>
     </div>
@@ -291,6 +294,13 @@ async function load() {
 async function resetStats() {
   if (!confirm('重置将清空全部统计数字(总请求量 / 成功率 / TOKEN / 成本归零),请求日志保留。确定继续?')) return
   await api.resetStats()
+  await load()
+}
+
+async function clearLogs() {
+  if (!confirm('清除将删除全部请求日志记录,统计数字保留。此操作不可恢复,确定继续?')) return
+  await api.clearLogs()
+  page.value = 1
   await load()
 }
 

@@ -147,6 +147,15 @@ func (s *Store) IncrementChannelFailure(id int64, errMsg string) (int, error) {
 	return count, nil
 }
 
+// ClearChannelFailure 请求成功时清零该渠道失败计数。
+// 仅在 failure_count > 0 时执行,避免每次成功请求都无谓写库。
+// 这样 cooldown_threshold 的语义为"连续失败 N 次才冷却",中间有成功则重新计数。
+func (s *Store) ClearChannelFailure(id int64) error {
+	_, err := s.db.Exec("UPDATE channels SET failure_count=0, last_error='', updated_at=? WHERE id=? AND failure_count > 0",
+		ts(time.Now()), id)
+	return err
+}
+
 // RefreshCoolDowns 把已过期的冷静渠道恢复正常(启动与路由时惰性调用)
 func (s *Store) RefreshCoolDowns() error {
 	_, err := s.db.Exec("UPDATE channels SET status='normal', failure_count=0 WHERE status='cooldown' AND cooldown_until > 0 AND cooldown_until <= ?", ts(time.Now()))

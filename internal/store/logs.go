@@ -99,3 +99,9 @@ func (s *Store) PruneLogs(days int) error {
 	_, err := s.db.Exec("DELETE FROM request_logs WHERE request_time < ?", cutoff)
 	return err
 }
+
+// ClearLogs 清空全部请求日志(不涉及统计聚合表)
+func (s *Store) ClearLogs() error {
+	_, err := s.db.Exec("DELETE FROM request_logs")
+	return err
+}
