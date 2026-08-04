@@ -10,6 +10,68 @@
       </button>
     </div>
 
+    <!-- 客户端接入指南 -->
+    <div class="glass-card mb-8 p-6">
+      <div class="flex items-center justify-between mb-5">
+        <div class="flex items-center gap-2">
+          <Icon icon="lucide:plug" class="text-[#737373]" />
+          <h2 class="text-sm font-bold uppercase tracking-widest">客户端接入指南</h2>
+        </div>
+        <span class="text-[10px] font-mono text-[#737373]">OpenAI 兼容</span>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-6 mb-6">
+        <!-- Base URL -->
+        <div>
+          <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">Base URL(客户端填写此地址)</label>
+          <div class="flex items-center gap-2">
+            <code class="flex-1 px-3 py-2 rounded input-field text-xs font-mono text-white select-all">{{ baseUrl }}</code>
+            <button @click="copy(baseUrl)" title="复制 Base URL" class="p-2 hover:bg-[#262626] rounded text-[#a3a3a3] hover:text-white">
+              <Icon icon="lucide:copy" class="text-lg" />
+            </button>
+          </div>
+          <p class="text-[10px] text-[#525252] mt-1.5">OpenAI SDK 中 base_url 填此地址,如 Python: OpenAI(base_url="{{ baseUrl }}")</p>
+        </div>
+
+        <!-- 认证 -->
+        <div>
+          <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">认证方式</label>
+          <div class="flex items-center gap-2">
+            <code class="flex-1 px-3 py-2 rounded input-field text-xs font-mono text-white select-all">Authorization: Bearer &lt;你的 API key&gt;</code>
+            <button @click="copy('Authorization: Bearer <你的 API key>')" title="复制认证头" class="p-2 hover:bg-[#262626] rounded text-[#a3a3a3] hover:text-white">
+              <Icon icon="lucide:copy" class="text-lg" />
+            </button>
+          </div>
+          <p class="text-[10px] text-[#525252] mt-1.5">用上方创建的 API key 替换 &lt;你的 API key&gt;</p>
+        </div>
+      </div>
+
+      <!-- 支持的接口 -->
+      <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-3">当前支持的接口</label>
+      <div class="space-y-2">
+        <div v-for="ep in endpoints" :key="ep.path" class="flex items-center gap-3 p-3 bg-[#1a1a1a] border border-[#262626] rounded">
+          <span class="w-14 text-center text-[10px] font-bold px-2 py-1 rounded"
+            :class="ep.method === 'GET' ? 'bg-blue-500/10 text-blue-400' : 'bg-green-500/10 text-green-400'">{{ ep.method }}</span>
+          <code class="font-mono text-xs text-white flex-1">{{ ep.path }}</code>
+          <span class="text-[11px] text-[#737373] hidden md:inline">{{ ep.desc }}</span>
+          <button @click="copy(baseUrl + ep.path)" title="复制完整地址" class="p-1.5 hover:bg-[#262626] rounded text-[#a3a3a3] hover:text-white">
+            <Icon icon="lucide:copy" class="text-sm" />
+          </button>
+        </div>
+      </div>
+
+      <!-- curl 示例 -->
+      <div class="mt-6">
+        <label class="text-[10px] font-bold text-[#737373] uppercase tracking-widest block mb-2">快速开始(curl 示例)</label>
+        <div class="relative">
+          <pre class="json-block">{{ curlExample }}</pre>
+          <button @click="copy(curlExample)" class="absolute top-2 right-2 p-1.5 hover:bg-[#262626] rounded text-[#737373] hover:text-white" title="复制示例">
+            <Icon icon="lucide:copy" class="text-sm" />
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="glass-card overflow-hidden">
       <TableHeader title="网关 API 密钥列表" show-refresh refresh-label="刷新列表" @refresh="load" />
       <div class="overflow-x-auto">
@@ -98,7 +160,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { api, fmtNum, fmtTime } from '../api'
 import TableHeader from '../components/TableHeader.vue'
@@ -107,6 +169,17 @@ const keys = ref([])
 const showModal = ref(false)
 const createdKey = ref(null)
 const name = ref('')
+
+// 客户端接入指南:base URL 取自当前页面地址(管理界面与 /v1 同源)
+const baseUrl = computed(() => `${window.location.origin}/v1`)
+const endpoints = [
+  { method: 'GET', path: '/v1/models', desc: '获取可用模型列表' },
+  { method: 'POST', path: '/v1/chat/completions', desc: '对话补全(支持 stream)' },
+]
+const curlExample = computed(() => `curl ${baseUrl.value}/chat/completions \\
+  -H "Authorization: Bearer sk-gate-xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"你好"}],"stream":true}'`)
 
 function masked(prefix) {
   return prefix ? prefix.slice(0, -4).replace(/./g, '•') : '••••'
