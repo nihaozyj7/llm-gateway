@@ -1,4 +1,5 @@
 # 构建脚本:前端 + Go 单二进制
+# 用法:./build.ps1 [-Windows] [-Linux]  无参数默认构建 Windows;可同时指定构建两个平台
 param(
     [switch]$Linux,
     [switch]$Windows
@@ -27,7 +28,8 @@ if ($Linux) {
     $env:GOARCH = "amd64"
     go build -o (Join-Path $root "gateway-linux") ./cmd/gateway
     Write-Host "已生成: gateway-linux"
-} else {
+}
+if ($Windows -or (-not $Linux -and -not $Windows)) {
     $env:CGO_ENABLED = "0"
     $env:GOOS = "windows"
     $env:GOARCH = "amd64"

@@ -54,16 +54,16 @@
 
 ### 方式二:从源码构建
 
-前置要求:Go 1.21+、Node.js 18+。
+前置要求:Go 1.26+、Node.js 18+。
 
 ```powershell
 # Windows(当前目录)
 ./build.ps1
 
-# 交叉编译 Linux amd64
+# 仅构建 Linux amd64
 ./build.ps1 -Linux
 
-# 同时构建两个平台
+# 同时构建 Windows + Linux
 ./build.ps1 -Windows -Linux
 ```
 
