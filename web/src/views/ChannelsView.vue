@@ -23,9 +23,9 @@
             <h3 class="text-lg font-bold mt-1">{{ c.name }}</h3>
             <div class="text-xs font-mono text-[#737373] mt-1 break-all">{{ c.base_url }}</div>
           </div>
-          <StatusBadge v-if="c.status === 'cooldown'" text="Cooldown" type="error" />
-          <StatusBadge v-else-if="c.enabled" text="Online" type="success" />
-          <StatusBadge v-else text="Disabled" type="neutral" />
+          <StatusBadge v-if="c.status === 'cooldown'" text="冷静中" type="error" />
+          <StatusBadge v-else-if="c.enabled" text="在线" type="success" />
+          <StatusBadge v-else text="已禁用" type="neutral" />
         </div>
 
         <!-- 冷静期错误条 -->

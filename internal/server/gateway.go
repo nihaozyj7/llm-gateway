@@ -35,14 +35,12 @@ func (h *GatewayHandler) Mount(mux *http.ServeMux) {
 func (h *GatewayHandler) handleV1(w http.ResponseWriter, r *http.Request) {
 	// CORS:允许浏览器端应用(如本地网页、Web 工具)跨域调用网关 API。
 	// 仅对 /v1/* 开放;管理接口 /api/admin/* 不开 CORS,避免远程页面借本机浏览器越权。
-	origin := r.Header.Get("Origin")
-	if origin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Vary", "Origin")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-	}
+	// 固定返回 *:/v1/* 为带 API key 鉴权的公开转发接口,允许任意来源调用;
+	// 上游返回的 CORS 头会在流式透传时被过滤(见 route.doStreamOnce),不会与本头合并成多值。
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
+	w.Header().Set("Access-Control-Max-Age", "86400")
 	if r.Method == http.MethodOptions {
 		// 预检请求:直接放行,不校验 API key(预检不带 Authorization 头)
 		w.WriteHeader(http.StatusNoContent)

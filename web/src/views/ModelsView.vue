@@ -73,8 +73,8 @@
                 <span v-else class="text-[#a3a3a3] tracking-tight">--</span>
               </td>
               <td class="px-4 py-4">
-                <StatusBadge v-if="hasCooldownChannel(m)" text="System Cool Down" type="error" />
-                <StatusBadge v-else text="Enabled" type="success" />
+                <StatusBadge v-if="hasCooldownChannel(m)" text="系统冷静" type="error" />
+                <StatusBadge v-else text="已启用" type="success" />
               </td>
               <td class="px-4 py-4 text-right">
                 <span class="text-xs font-bold uppercase tracking-tighter space-x-4">
@@ -162,10 +162,10 @@
                 <Icon :icon="resultIcon(r)" class="text-sm" :class="resultColor(r)" />
                 <span class="text-sm font-medium">{{ r.channel_name }}</span>
                 <span class="text-[10px] font-mono text-[#737373]">P{{ r.priority }}</span>
-                <StatusBadge v-if="r.channel_status === 'cooldown'" text="Cool Down" type="error" />
+                <StatusBadge v-if="r.channel_status === 'cooldown'" text="冷静中" type="error" />
               </div>
               <span class="text-[10px] uppercase font-bold" :class="r.ok ? 'text-green-500' : 'text-red-500'">
-                {{ r.skipped ? 'SKIPPED' : (r.ok ? 'OK' : 'FAIL') }}
+                {{ r.skipped ? '已跳过' : (r.ok ? '成功' : '失败') }}
               </span>
             </div>
             <div v-if="r.skip_reason" class="mt-1 text-xs text-[#737373]">{{ r.skip_reason }}</div>

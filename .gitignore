@@ -2,8 +2,10 @@
 *.exe
 *.exe~
 *.bak
-gateway
+# 仅忽略根目录下无扩展名的 Linux 构建产物;不能写成 `gateway`(会连 cmd/gateway/ 目录一起忽略)
+/gateway
 gateway-linux
+cmd/gateway/*.syso
 
 # 运行数据
 .data/

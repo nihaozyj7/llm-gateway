@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gateway/internal/config"
+	"gateway/internal/model"
 	"gateway/internal/store"
 )
 
@@ -143,7 +144,7 @@ func TestNonStreamUsesNonStreamTimeout(t *testing.T) {
 	cfg.NonStreamTimeout = 5 * time.Second       // 非流式完整超时足够长
 	r := newTestRouter(t, cfg)
 
-	res := r.doOnce(context.Background(), up.URL+"/chat/completions", []byte(`{"model":"m"}`), "sk-test", "", 0)
+	res := r.doOnce(context.Background(), up.URL+"/chat/completions", []byte(`{"model":"m"}`), "sk-test", "")
 	if res.ChannelFail {
 		t.Fatalf("non-stream failed: %v", res.ErrorMessage)
 	}
@@ -152,6 +153,117 @@ func TestNonStreamUsesNonStreamTimeout(t *testing.T) {
 	}
 	if res.Usage == nil || res.Usage.TotalTokens != 3 {
 		t.Errorf("usage = %+v, want total 3", res.Usage)
+	}
+}
+
+// TestNonStreamIgnoresChannelTimeout 回归:渠道级 timeout_ms 只约束流式 TTFB,
+// 非流式请求必须使用全局 non_stream_timeout,不能被渠道级短超时掐死
+// (MCP/图片等慢速非流式请求曾因此全部渠道超时失败)。
+func TestNonStreamIgnoresChannelTimeout(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond) // 慢于渠道级 200ms,但远快于 non_stream_timeout
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`))
+	}))
+	defer up.Close()
+
+	cfg := config.Default()
+	cfg.NonStreamTimeout = 5 * time.Second
+	cfg.UpstreamTimeout = 100 * time.Millisecond // 流式 TTFB 很短,不影响非流式
+	r := newTestRouter(t, cfg)
+
+	// 渠道配置极短超时 200ms:若被错误用于非流式整体,请求必然超时
+	chID, err := r.store.CreateChannel(&model.Channel{
+		Name:       "slow-up",
+		BaseURL:    up.URL,
+		APIKey:     "sk-test",
+		AuthHeader: "Authorization",
+		Priority:   1,
+		Enabled:    true,
+		TimeoutMs:  200,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	mID, err := r.store.UpsertModel("m-slow", "slow model")
+	if err != nil {
+		t.Fatalf("UpsertModel: %v", err)
+	}
+	if err := r.store.AddChannelModel(chID, mID, ""); err != nil {
+		t.Fatalf("AddChannelModel: %v", err)
+	}
+
+	cand, res, _, err := r.Handle(context.Background(), "m-slow", "/v1/chat/completions", "", "", []byte(`{"model":"m-slow"}`), false)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if res == nil || res.ChannelFail {
+		t.Fatalf("non-stream must not be killed by channel-level timeout: %+v (cand=%v)", res, cand)
+	}
+}
+
+// TestHandleAllFailReturnsChannelDetail 全部渠道失败时:
+// 1) 返回最后尝试的渠道(供日志展示失败渠道名);
+// 2) 错误信息汇总各渠道具体失败原因(而非空泛的 all channels failed)。
+func TestHandleAllFailReturnsChannelDetail(t *testing.T) {
+	// 两个上游都返回 503,触发渠道失败
+	up1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+	}))
+	defer up1.Close()
+	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+	}))
+	defer up2.Close()
+
+	cfg := config.Default()
+	cfg.NonStreamTimeout = 5 * time.Second
+	cfg.RetrySameChannel = false // 避免同渠道重试,聚焦降级链路
+	r := newTestRouter(t, cfg)
+
+	ch1, err := r.store.CreateChannel(&model.Channel{
+		Name: "chan-a", BaseURL: up1.URL, APIKey: "sk-1", AuthHeader: "Authorization",
+		Priority: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	ch2, err := r.store.CreateChannel(&model.Channel{
+		Name: "chan-b", BaseURL: up2.URL, APIKey: "sk-2", AuthHeader: "Authorization",
+		Priority: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	mID, err := r.store.UpsertModel("m-fail", "fail model")
+	if err != nil {
+		t.Fatalf("UpsertModel: %v", err)
+	}
+	if err := r.store.AddChannelModel(ch1, mID, ""); err != nil {
+		t.Fatalf("AddChannelModel: %v", err)
+	}
+	if err := r.store.AddChannelModel(ch2, mID, ""); err != nil {
+		t.Fatalf("AddChannelModel: %v", err)
+	}
+
+	cand, res, _, err := r.Handle(context.Background(), "m-fail", "/v1/chat/completions", "", "", []byte(`{"model":"m-fail"}`), false)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if res == nil || !res.ChannelFail {
+		t.Fatalf("expected all-channels failure, got %+v", res)
+	}
+	// 应返回最后尝试的渠道(chan-b),供日志展示失败渠道名
+	if cand == nil || cand.ChannelName != "chan-b" {
+		t.Fatalf("expected last attempted channel chan-b, got %+v", cand)
+	}
+	// 错误信息应包含两个渠道的具体失败原因(HTTP 503)
+	if !strings.Contains(res.ErrorMessage, "chan-a") || !strings.Contains(res.ErrorMessage, "chan-b") {
+		t.Errorf("error message should list per-channel reasons, got %q", res.ErrorMessage)
+	}
+	if !strings.Contains(res.ErrorMessage, "503") {
+		t.Errorf("error message should include HTTP status, got %q", res.ErrorMessage)
 	}
 }
 
@@ -168,7 +280,7 @@ func TestNonStreamTTFBTimeout(t *testing.T) {
 	cfg.NonStreamTimeout = 300 * time.Millisecond
 	r := newTestRouter(t, cfg)
 
-	res := r.doOnce(context.Background(), up.URL+"/chat/completions", []byte(`{"model":"m"}`), "sk-test", "", 0)
+	res := r.doOnce(context.Background(), up.URL+"/chat/completions", []byte(`{"model":"m"}`), "sk-test", "")
 	if !res.ChannelFail {
 		t.Fatal("expected non-stream timeout failure")
 	}

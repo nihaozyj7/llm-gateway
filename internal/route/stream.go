@@ -106,9 +106,11 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 		}
 	}
 
-	// 透传响应头(过滤 hop-by-hop 头,避免 Content-Length/Connection 干扰流式)
+	// 透传响应头(过滤 hop-by-hop 头与 CORS 头,避免 Content-Length/Connection 干扰流式,
+	// 也避免上游的 Access-Control-Allow-Origin 等与网关统一设置的 CORS 头合并成多值)
 	for k, vv := range resp.Header {
-		if isHopByHopHeader(k) || strings.EqualFold(k, "Content-Length") {
+		lowerK := strings.ToLower(k)
+		if isHopByHopHeader(k) || lowerK == "content-length" || strings.HasPrefix(lowerK, "access-control-") {
 			continue
 		}
 		for _, v := range vv {
@@ -210,6 +212,10 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 	}
 
 	attempts := 0
+	// 收集各渠道失败原因,便于返回详细错误信息
+	var failReasons []string
+	lastCand := candidates[0] // 全部失败时返回最后尝试的渠道,供日志展示渠道名
+
 	for _, cand := range candidates {
 		target, err := BuildUpstreamURL(cand.BaseURL, clientPath)
 		if err != nil {
@@ -237,9 +243,23 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 		}
 		// 降级到下一渠道
 		r.markChannelFail(cand, &Result{ChannelFail: true, ErrorMessage: res.ErrorMessage})
+		lastCand = cand
+		failReasons = append(failReasons, fmt.Sprintf("%s(%s)", cand.ChannelName, streamShortErr(res)))
 	}
-	last := &StreamResult{ChannelFail: true, ErrorMessage: "all channels failed for stream request"}
-	return nil, last, attempts, nil
+	detail := ""
+	if len(failReasons) > 0 {
+		detail = ":" + strings.Join(failReasons, "; ")
+	}
+	last := &StreamResult{ChannelFail: true, ErrorMessage: "all channels failed for stream request" + detail}
+	return lastCand, last, attempts, nil
+}
+
+// streamShortErr 生成流式渠道失败的简短描述
+func streamShortErr(res *StreamResult) string {
+	if res.ErrorMessage != "" {
+		return res.ErrorMessage
+	}
+	return "unknown error"
 }
 
 // isHopByHopHeader 判断是否为逐跳头(不应透传)

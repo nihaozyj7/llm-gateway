@@ -58,10 +58,10 @@
           <label class="text-[10px] font-bold uppercase tracking-widest mb-2 block text-[#737373]">状态筛选</label>
           <select v-model="filters.status" @change="applyFilter" class="w-full bg-[#1a1a1a] border-[#262626] text-xs px-3 py-2 rounded focus:border-white input-field">
             <option value="">所有状态</option>
-            <option value="success">Success</option>
-            <option value="retry_success">Retry</option>
-            <option value="fail">Error</option>
-            <option value="biz_error">Biz Error</option>
+            <option value="success">成功</option>
+            <option value="retry_success">重试成功</option>
+            <option value="fail">失败</option>
+            <option value="biz_error">业务错误</option>
           </select>
         </div>
         <div>
@@ -105,7 +105,10 @@
                 </td>
                 <td class="p-4 font-mono text-xs text-[#a3a3a3]">{{ log.source_ip }}</td>
                 <td class="p-4">
-                  <div class="text-xs font-medium uppercase tracking-tighter">{{ log.channel_name || '--' }}</div>
+                  <div class="text-xs font-medium uppercase tracking-tighter" :class="log.status === 'fail' ? 'text-red-500' : ''">
+                    <template v-if="log.status === 'fail'">{{ log.channel_name ? log.channel_name + ' → ' + log.model : '--' }}</template>
+                    <template v-else>{{ log.channel_name || '--' }}</template>
+                  </div>
                   <div class="text-[11px] font-mono text-[#a3a3a3]">
                     <template v-if="log.upstream_model && log.upstream_model !== log.model">{{ log.model }} <span class="text-[#737373]">→</span> <span class="text-blue-400">{{ log.upstream_model }}</span></template>
                     <template v-else>{{ log.model }}</template>
@@ -144,8 +147,9 @@
                       <div class="json-block max-h-72 overflow-y-auto">{{ prettyJSON(log.payload_response) }}</div>
                     </div>
                   </div>
-                  <div v-if="log.error" class="mt-4 text-xs text-red-500 bg-red-500/5 border border-red-500/20 rounded p-3 font-mono break-all">
-                    错误信息:{{ log.error }}
+                  <div v-if="log.error" class="mt-4 text-xs text-red-500 bg-red-500/5 border border-red-500/20 rounded p-3 break-all">
+                    <div class="font-bold mb-1">错误信息</div>
+                    <div class="whitespace-pre-line">{{ errorText(log) }}</div>
                   </div>
                 </td>
               </tr>
@@ -224,8 +228,40 @@ const successRate = computed(() => {
 })
 
 function badgeText(s) {
-  const map = { success: 'Success', retry_success: 'Retry [1]', fail: 'Failed', biz_error: 'Biz Error' }
+  const map = { success: '成功', retry_success: '重试成功', fail: '失败', biz_error: '业务错误' }
   return map[s] || s
+}
+// 错误信息中文化:解析后端 error 字符串,输出中文可读提示
+function errorText(log) {
+  if (!log || !log.error) return ''
+  const raw = log.error
+  // 所有渠道失败:all channels failed:渠道名(原因); 渠道名(原因)
+  if (raw.includes('all channels failed')) {
+    const parts = raw.split(':').slice(1).join(':').split('; ').filter(Boolean)
+    if (parts.length) {
+      const detail = parts.map(p => {
+        const m = p.match(/^(.+)\((.+)\)$/)
+        if (m) return `${m[1]}: ${translateErr(m[2])}`
+        return translateErr(p)
+      }).join('\n')
+      return '所有渠道均失败:\n' + detail
+    }
+    return '所有渠道均失败'
+  }
+  return translateErr(raw)
+}
+// 常见上游错误英文 → 中文
+function translateErr(e) {
+  const lower = (e || '').toLowerCase()
+  if (lower.includes('context deadline exceeded')) return '上游请求超时(超过渠道/全局超时限制)'
+  if (lower.includes('context canceled')) return '上游请求被取消(超时或连接中断)'
+  if (lower.includes('connection refused')) return '连接被拒绝(上游不可达)'
+  if (lower.includes('no such host')) return '域名解析失败(上游地址错误)'
+  if (lower.includes('tls')) return 'TLS 握手失败(证书/协议问题)'
+  if (lower.includes('timeout')) return '请求超时'
+  if (lower.includes('no available channel')) return '无可用渠道(模型未配置渠道或全部冷却中)'
+  if (lower.includes('upstream response too large')) return '上游响应体超限(>64MB)'
+  return e
 }
 function badgeType(s) {
   if (s === 'success') return 'success'

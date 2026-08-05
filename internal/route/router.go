@@ -194,14 +194,12 @@ func (r *Router) classifyError(err error) (fail bool, msg string) {
 }
 
 // doOnce 单次上游请求(非流式)。
-// timeout 为渠道级超时;<=0 时回退到全局 cfg.NonStreamTimeout(再 <=0 则不设超时)。
-// 该超时约束整个非流式请求:首次响应 + 读取完整响应体(默认 5 分钟)。
-func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey, authHeader string, timeout time.Duration) *Result {
+// 超时一律使用全局 cfg.NonStreamTimeout(<=0 则不设超时),约束整个非流式请求:
+// 首次响应 + 读取完整响应体(默认 5 分钟)。渠道级 timeout_ms 仅对流式 TTFB 生效
+// (见 doStreamOnce),不作用于非流式请求。
+func (r *Router) doOnce(ctx context.Context, target string, body []byte, apiKey, authHeader string) *Result {
 	start := time.Now()
-	total := timeout
-	if total <= 0 {
-		total = r.cfg.NonStreamTimeout
-	}
+	total := r.cfg.NonStreamTimeout
 	reqCtx, cancel := context.WithCancel(ctx)
 	if total > 0 {
 		reqCtx, cancel = context.WithTimeout(ctx, total)
@@ -296,6 +294,10 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 		maxAttempts = len(candidates) * 2 // 每渠道最多 2 次(首次+重试)
 	}
 
+	// 收集各渠道失败原因,便于返回详细错误信息
+	var failReasons []string
+	lastCand := candidates[0] // 全部失败时返回最后尝试的渠道,供日志展示渠道名
+
 	for _, cand := range candidates {
 		// 首次尝试
 		target, err := BuildUpstreamURL(cand.BaseURL, clientPath)
@@ -306,7 +308,7 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 		if cand.UpstreamModelName != "" {
 			sendBody = ApplyModelMapping(body, cand.UpstreamModelName)
 		}
-		res := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
+		res := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader)
 		attempts++
 		if res.BizError {
 			return cand, res, attempts, nil // 业务错误:直接返回,不降级
@@ -318,7 +320,7 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 		}
 		// 渠道失败:重试同一渠道一次
 		if r.cfg.RetrySameChannel && attempts < maxAttempts {
-			res2 := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
+			res2 := r.doOnce(ctx, target, sendBody, cand.APIKey, authHeader)
 			attempts++
 			if res2.BizError {
 				return cand, res2, attempts, nil
@@ -331,10 +333,27 @@ func (r *Router) Handle(ctx context.Context, modelID, clientPath, apiKey, authHe
 		}
 		// 记录渠道失败并降级
 		r.markChannelFail(cand, res)
+		lastCand = cand
+		failReasons = append(failReasons, fmt.Sprintf("%s(%s)", cand.ChannelName, shortErr(res)))
 	}
-	// 全部失败:返回最后一次错误
-	last := &Result{ChannelFail: true, ErrorMessage: "all channels failed"}
-	return nil, last, attempts, nil
+	// 全部失败:返回汇总错误与最后尝试的渠道(日志可展示失败渠道名)
+	detail := ""
+	if len(failReasons) > 0 {
+		detail = ":" + strings.Join(failReasons, "; ")
+	}
+	last := &Result{ChannelFail: true, ErrorMessage: "all channels failed" + detail}
+	return lastCand, last, attempts, nil
+}
+
+// shortErr 生成渠道失败的简短描述(错误信息或 HTTP 状态)
+func shortErr(res *Result) string {
+	if res.ErrorMessage != "" {
+		return res.ErrorMessage
+	}
+	if res.Status > 0 {
+		return fmt.Sprintf("HTTP %d", res.Status)
+	}
+	return "unknown error"
 }
 
 // markChannelFail 渠道失败计数,达阈值进入冷静(冷静时长优先渠道级配置)

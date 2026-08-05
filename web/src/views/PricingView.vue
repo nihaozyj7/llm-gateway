@@ -21,9 +21,9 @@
         <div class="flex items-center gap-4">
           <select v-model="series" class="bg-[#1a1a1a] border-[#262626] rounded px-3 py-1.5 text-xs input-field">
             <option value="">所有系列</option>
-            <option value="gpt">GPT Series</option>
-            <option value="claude">Claude Series</option>
-            <option value="deepseek">DeepSeek Series</option>
+            <option value="gpt">GPT 系列</option>
+            <option value="claude">Claude 系列</option>
+            <option value="deepseek">DeepSeek 系列</option>
           </select>
           <span class="text-[10px] font-bold uppercase text-[#737373]">* 汇率参考: 1 USD ≈ 7.24 CNY</span>
         </div>
@@ -45,7 +45,7 @@
           <tbody class="divide-y divide-[#262626]">
             <tr v-for="m in filtered" :key="m.id" class="hover:bg-[#1a1a1a] transition-colors">
               <td class="px-6 py-4 font-mono text-sm">{{ m.model_id }}</td>
-              <td class="px-6 py-4 text-xs text-[#737373]">{{ m.channels.length }} Channels</td>
+              <td class="px-6 py-4 text-xs text-[#737373]">{{ m.channels.length }} 个渠道</td>
               <td class="px-6 py-4">
                 <input v-model="prices[m.id].input" type="number" step="0.0001" min="0" placeholder="0.0000"
                   class="price-input w-24 px-2 py-1 text-xs mono-text" />
@@ -59,8 +59,8 @@
                   class="price-input w-24 px-2 py-1 text-xs mono-text" />
               </td>
               <td class="px-6 py-4">
-                <StatusBadge v-if="m.price_input != null || m.price_output != null || m.price_cache_read != null" text="Active" type="success" />
-                <StatusBadge v-else text="Free Tier?" type="info" />
+                <StatusBadge v-if="m.price_input != null || m.price_output != null || m.price_cache_read != null" text="已计费" type="success" />
+                <StatusBadge v-else text="未计费" type="info" />
               </td>
               <td class="px-6 py-4 text-right">
                 <button @click="resetPrice(m)" class="text-[10px] font-bold uppercase tracking-widest text-[#a3a3a3] hover:text-white">重置</button>
