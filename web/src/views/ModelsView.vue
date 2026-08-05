@@ -198,22 +198,59 @@
       </div>
     </div>
 
-    <!-- 同步弹窗 -->
+    <!-- 同步弹窗:获取 → 勾选 → 同步 -->
     <div v-if="syncModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div class="glass-card w-full max-w-sm p-8 shadow-2xl rounded-sm">
-        <h3 class="text-lg font-bold uppercase tracking-wider mb-2">从渠道同步模型</h3>
-        <p class="text-xs text-[#525252] mb-6">调用渠道的 /models 接口拉取模型列表并自动关联</p>
-        <select v-model="syncChannelId" class="w-full px-3 py-3 rounded input-field text-sm">
-          <option value="" disabled>选择目标渠道</option>
-          <option v-for="ch in channels" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
-        </select>
-        <div v-if="syncResult" class="mt-4 text-xs font-mono" :class="syncResult.ok ? 'text-green-500' : 'text-red-500'">{{ syncResult.msg }}</div>
-        <div class="flex gap-4 pt-6">
-          <button @click="syncModal = false" class="flex-1 py-3 text-sm font-bold rounded border border-[#262626] hover:bg-[#1a1a1a]">取消</button>
-          <button @click="doSync" :disabled="!syncChannelId || syncing" class="flex-1 py-3 text-sm font-bold rounded btn-primary disabled:opacity-50">
-            {{ syncing ? '同步中...' : '开始同步' }}
+      <div class="glass-card w-full max-w-2xl p-8 shadow-2xl rounded-sm">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-lg font-bold uppercase tracking-wider">从渠道同步模型</h3>
+          <button @click="closeSync" class="text-[#737373] hover:text-white"><Icon icon="lucide:x" /></button>
+        </div>
+        <p class="text-xs text-[#525252] mb-6">先获取渠道的模型列表,勾选需要的模型后再同步,避免全量导入</p>
+        <div class="flex gap-3">
+          <select v-model="syncChannelId" class="flex-1 px-3 py-3 rounded input-field text-sm">
+            <option value="" disabled>选择目标渠道</option>
+            <option v-for="ch in channels" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
+          </select>
+          <button @click="doFetch" :disabled="!syncChannelId || fetching" class="px-5 py-3 text-sm font-bold rounded btn-outline flex items-center gap-1 disabled:opacity-50">
+            <Icon icon="lucide:download" /> {{ fetching ? '获取中...' : '获取模型' }}
           </button>
         </div>
+
+        <template v-if="fetched">
+          <div class="mt-5">
+            <div class="flex items-center justify-between mb-2 gap-3">
+              <span class="text-xs font-bold text-[#737373] uppercase tracking-widest shrink-0">上游共 {{ fetchedModels.length }} 个,已勾选 {{ selectedArr.length }} 个</span>
+              <div class="flex items-center gap-3 min-w-0">
+                <input v-model="fetchKeyword" placeholder="搜索模型..." class="w-44 px-3 py-1.5 rounded input-field text-xs font-mono" />
+                <label class="text-xs text-[#a3a3a3] flex items-center gap-1.5 cursor-pointer shrink-0">
+                  <input type="checkbox" :checked="allChecked" @change="toggleAll" class="w-4 h-4 accent-white" /> 全选
+                </label>
+              </div>
+            </div>
+            <div class="border border-[#262626] rounded max-h-72 overflow-y-auto divide-y divide-[#1f1f1f]">
+              <div v-for="m in filteredFetched" :key="m" class="flex items-center gap-3 px-3 py-2 bg-[#1a1a1a]">
+                <input type="checkbox" :value="m" v-model="selectedArr" class="w-4 h-4 accent-white shrink-0" />
+                <span class="text-sm font-mono flex-1 truncate" :title="m">{{ m }}</span>
+                <StatusBadge v-if="existingIds.has(m)" text="已存在" type="neutral" />
+              </div>
+              <div v-if="!filteredFetched.length" class="py-8 text-center text-sm text-[#737373]">无匹配模型</div>
+            </div>
+          </div>
+          <div v-if="syncResult" class="mt-4 text-xs font-mono" :class="syncResult.ok ? 'text-green-500' : 'text-red-500'">{{ syncResult.msg }}</div>
+          <div class="flex gap-4 pt-6">
+            <button @click="closeSync" class="flex-1 py-3 text-sm font-bold rounded border border-[#262626] hover:bg-[#1a1a1a]">取消</button>
+            <button @click="doSync" :disabled="!selectedArr.length || syncing" class="flex-1 py-3 text-sm font-bold rounded btn-primary disabled:opacity-50">
+              {{ syncing ? '同步中...' : `同步 ${selectedArr.length} 个模型` }}
+            </button>
+          </div>
+        </template>
+
+        <template v-else>
+          <div v-if="syncResult" class="mt-4 text-xs font-mono" :class="syncResult.ok ? 'text-green-500' : 'text-red-500'">{{ syncResult.msg }}</div>
+          <div class="flex gap-4 pt-6">
+            <button @click="closeSync" class="flex-1 py-3 text-sm font-bold rounded border border-[#262626] hover:bg-[#1a1a1a]">取消</button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -234,6 +271,11 @@ const linkModal = ref(false)
 const syncModal = ref(false)
 const syncChannelId = ref('')
 const syncing = ref(false)
+const fetching = ref(false)
+const fetched = ref(false)
+const fetchedModels = ref([])
+const selectedArr = ref([])
+const fetchKeyword = ref('')
 const syncResult = ref(null)
 const newModel = ref({ model_id: '', display_name: '' })
 const linkTarget = ref(null)
@@ -249,6 +291,16 @@ let dragFrom = null
 const channelCount = computed(() => new Set(models.value.flatMap(m => m.channels.map(c => c.channel_id))).size)
 const pricedCount = computed(() => models.value.filter(m => m.price_input != null || m.price_output != null || m.price_cache_read != null).length)
 const cooldownCount = computed(() => channels.value.filter(c => c.status === 'cooldown').length)
+// 已在模型列表中的模型 ID,勾选时标注「已存在」
+const existingIds = computed(() => new Set(models.value.map(m => m.model_id)))
+// 同步弹窗中按关键词过滤上游模型
+const filteredFetched = computed(() => {
+  const kw = fetchKeyword.value.trim().toLowerCase()
+  if (!kw) return fetchedModels.value
+  return fetchedModels.value.filter(m => m.toLowerCase().includes(kw))
+})
+// 是否当前列表已全部勾选(全选按钮状态)
+const allChecked = computed(() => filteredFetched.value.length > 0 && filteredFetched.value.every(m => selectedArr.value.includes(m)))
 
 const filtered = computed(() => {
   if (!keyword.value) return models.value
@@ -381,18 +433,59 @@ async function savePriority(m) {
     await load()
   }
 }
+// 第一步:拉取渠道上游模型列表(不落库),供用户勾选
+async function doFetch() {
+  if (!syncChannelId.value || fetching.value) return
+  fetching.value = true
+  syncResult.value = null
+  try {
+    const r = await api.fetchChannelModels(syncChannelId.value)
+    fetchedModels.value = r.models || []
+    selectedArr.value = []
+    fetchKeyword.value = ''
+    fetched.value = true
+  } catch (e) {
+    syncResult.value = { ok: false, msg: e.message }
+  } finally {
+    fetching.value = false
+  }
+}
+// 全选/取消全选(作用于当前搜索结果列表)
+function toggleAll() {
+  if (allChecked.value) {
+    const cur = new Set(filteredFetched.value)
+    selectedArr.value = selectedArr.value.filter(m => !cur.has(m))
+  } else {
+    const cur = new Set(selectedArr.value)
+    for (const m of filteredFetched.value) cur.add(m)
+    selectedArr.value = [...cur]
+  }
+}
+// 第二步:只把勾选的模型同步到模型列表并关联渠道
 async function doSync() {
+  if (!selectedArr.value.length || syncing.value) return
   syncing.value = true
   syncResult.value = null
   try {
-    const r = await api.syncChannelModels(syncChannelId.value)
-    syncResult.value = { ok: true, msg: `同步完成:共 ${r.total} 个模型,新增/关联 ${r.added}` }
+    const r = await api.syncChannelModels(syncChannelId.value, [...new Set(selectedArr.value)])
+    syncResult.value = { ok: true, msg: `同步完成:共 ${r.total} 个,新增/关联 ${r.added}` }
     load()
   } catch (e) {
     syncResult.value = { ok: false, msg: e.message }
   } finally {
     syncing.value = false
   }
+}
+function closeSync() {
+  syncModal.value = false
+  syncChannelId.value = ''
+  fetching.value = false
+  syncing.value = false
+  fetched.value = false
+  fetchedModels.value = []
+  selectedArr.value = []
+  fetchKeyword.value = ''
+  syncResult.value = null
 }
 async function load() {
   const [m, c] = await Promise.all([api.listModels(), api.listChannels()])

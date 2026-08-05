@@ -62,6 +62,7 @@
             <option value="retry_success">重试成功</option>
             <option value="fail">失败</option>
             <option value="biz_error">业务错误</option>
+            <option value="canceled">客户端断开</option>
           </select>
         </div>
         <div>
@@ -105,8 +106,16 @@
                 </td>
                 <td class="p-4 font-mono text-xs text-[#a3a3a3]">{{ log.source_ip }}</td>
                 <td class="p-4">
-                  <div class="text-xs font-medium uppercase tracking-tighter" :class="log.status === 'fail' ? 'text-red-500' : ''">
-                    <template v-if="log.status === 'fail'">{{ log.channel_name ? log.channel_name + ' → ' + log.model : '--' }}</template>
+                  <div class="text-xs font-medium uppercase tracking-tighter">
+                    <!-- 渠道尝试链路:渠道1(失败)→渠道2(成功),每个渠道按自身结果着色 -->
+                    <template v-if="channelTrail(log).length">
+                      <template v-for="(t, i) in channelTrail(log)" :key="i">
+                        <span v-if="i" class="text-[#525252]">→</span>
+                        <span :class="trailCls(t)" :title="t.reason || t.channel_name">{{ t.channel_name }}</span>
+                      </template>
+                    </template>
+                    <!-- 旧日志(无链路字段)回退:失败展示 渠道 → 模型,其余展示渠道名 -->
+                    <template v-else-if="log.status === 'fail'">{{ log.channel_name ? log.channel_name + ' → ' + log.model : '--' }}</template>
                     <template v-else>{{ log.channel_name || '--' }}</template>
                   </div>
                   <div class="text-[11px] font-mono text-[#a3a3a3]">
@@ -228,7 +237,7 @@ const successRate = computed(() => {
 })
 
 function badgeText(s) {
-  const map = { success: '成功', retry_success: '重试成功', fail: '失败', biz_error: '业务错误' }
+  const map = { success: '成功', retry_success: '重试成功', fail: '失败', biz_error: '业务错误', canceled: '客户端断开' }
   return map[s] || s
 }
 // 错误信息中文化:解析后端 error 字符串,输出中文可读提示
@@ -254,7 +263,8 @@ function errorText(log) {
 function translateErr(e) {
   const lower = (e || '').toLowerCase()
   if (lower.includes('context deadline exceeded')) return '上游请求超时(超过渠道/全局超时限制)'
-  if (lower.includes('context canceled')) return '上游请求被取消(超时或连接中断)'
+  if (lower.includes('context canceled')) return '客户端断开连接(请求已取消)'
+  if (lower.includes('client canceled') || lower.includes('request canceled')) return '客户端断开连接(请求已取消)'
   if (lower.includes('connection refused')) return '连接被拒绝(上游不可达)'
   if (lower.includes('no such host')) return '域名解析失败(上游地址错误)'
   if (lower.includes('tls')) return 'TLS 握手失败(证书/协议问题)'
@@ -267,7 +277,24 @@ function badgeType(s) {
   if (s === 'success') return 'success'
   if (s === 'retry_success') return 'info'
   if (s === 'biz_error') return 'warning'
+  if (s === 'canceled') return 'info'
   return 'error'
+}
+// 渠道尝试链路:解析 channel_trail JSON;旧日志无该字段时返回空数组(前端回退旧显示)
+function channelTrail(log) {
+  if (!log || !log.channel_trail) return []
+  try {
+    const arr = JSON.parse(log.channel_trail)
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
+}
+// 链路渠道样式:正常响应不染色,故障红色,客户端取消灰色(非渠道故障)
+function trailCls(t) {
+  if (t.ok) return ''
+  if (t.reason === 'client canceled' || t.reason === 'request canceled') return 'text-gray-500'
+  return 'text-red-500'
 }
 function toggleExpand(id) {
   expanded.value = expanded.value === id ? null : id

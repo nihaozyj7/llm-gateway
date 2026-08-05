@@ -28,6 +28,7 @@ func (h *AdminHandler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/channels/reorder", h.requireLocal(h.handleChannelsReorder))
 	mux.HandleFunc("/api/admin/models", h.requireLocal(h.handleModels))
 	mux.HandleFunc("/api/admin/models/", h.requireLocal(h.handleModelByID))
+	mux.HandleFunc("/api/admin/models/fetch", h.requireLocal(h.handleModelFetch))
 	mux.HandleFunc("/api/admin/models/sync", h.requireLocal(h.handleModelSync))
 	mux.HandleFunc("/api/admin/models/test", h.requireLocal(h.handleModelTest))
 	mux.HandleFunc("/api/admin/keys", h.requireLocal(h.handleKeys))

@@ -74,7 +74,7 @@ type RequestLog struct {
 	ChannelName      string    `json:"channel_name"`
 	Model            string    `json:"model"`          // 客户端请求的模型
 	UpstreamModel    string    `json:"upstream_model"` // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
-	Status           string    `json:"status"`         // success / fail / biz_error / retry_success
+	Status           string    `json:"status"` // success / fail / biz_error / retry_success / canceled
 	LatencyMs        int64     `json:"latency_ms"`             // 请求发起 → 结束总耗时
 	FirstResponseMs  int64     `json:"first_response_ms"`      // 请求发起 → 收到首次响应(响应头)耗时,用于计算输出 token 速度
 	PromptTokens     int64     `json:"prompt_tokens"`
@@ -86,6 +86,7 @@ type RequestLog struct {
 	SourceIP         string    `json:"source_ip"`
 	PayloadRequest   string    `json:"payload_request,omitempty"`  // 请求体(可选)
 	PayloadResponse  string    `json:"payload_response,omitempty"` // 响应体(可选)
+	ChannelTrail     string    `json:"channel_trail,omitempty"`    // 渠道尝试链路 JSON(如 [{"channel_name":"A","ok":false,"reason":"HTTP 503"},...])
 }
 
 // StatRow 聚合统计行(日/小时)

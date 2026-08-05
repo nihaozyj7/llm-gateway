@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"time"
 
 	"gateway/internal/model"
@@ -20,6 +21,19 @@ type storeLogEntry struct {
 	SourceIP        string
 	PayloadReq      string
 	FirstResponseMs int64 // 请求发起 → 收到首次响应耗时(毫秒)
+	ChannelTrail    string // 渠道尝试链路 JSON(概览展示 渠道1(失败)→渠道2(成功))
+}
+
+// trailJSON 将渠道尝试链路序列化为 JSON 文本(空链路返回空串)
+func trailJSON(t []route.TrailStep) string {
+	if len(t) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // writeLog 落库日志 + 更新统计,并按模型价格计算成本
@@ -58,6 +72,7 @@ func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs i
 		SourceIP:         e.SourceIP,
 		PayloadRequest:   e.PayloadReq,
 		PayloadResponse:  payloadResp,
+		ChannelTrail:     e.ChannelTrail,
 	}
 	if _, err := h.store.InsertLog(l); err == nil {
 		_ = h.store.RecordStat(l)

@@ -17,8 +17,10 @@ import (
 type StreamResult struct {
 	ChannelFail     bool   // 首包前失败(可降级)
 	Started         bool   // 是否已向客户端写入首字节
+	ClientCanceled  bool   // 客户端断开/上层取消(非渠道故障,不重试不降级不计数)
 	ErrorMessage    string
 	Usage           *Usage
+	Trail           []TrailStep // 本次请求渠道尝试链路(含最终结果)
 	FirstResponseMs int64 // 请求发起 → 收到首次响应(响应头)耗时
 }
 
@@ -79,6 +81,10 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 			// TTFB 定时器已触发:首次响应超时
 			return &StreamResult{ChannelFail: true, ErrorMessage: "upstream timeout: first response not received within " + ttfb.String(), FirstResponseMs: firstMs}
 		}
+		// 父 ctx 已取消(客户端断开/上层取消):不是渠道故障,不重试不降级
+		if ctx.Err() != nil {
+			return &StreamResult{ClientCanceled: true, ErrorMessage: "client canceled", FirstResponseMs: firstMs}
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return &StreamResult{ChannelFail: true, ErrorMessage: "stream duration exceeded (max " + maxDur.String() + ")", FirstResponseMs: firstMs}
 		}
@@ -124,6 +130,7 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 	br := bufio.NewReader(resp.Body)
 	var usage *Usage
 	var writeErr error
+	canceled := false // 客户端断开/上层取消(区别于渠道/上游故障)
 
 	for {
 		// 流式最长持续时间检查:超时后即使仍在输出也判定超时;
@@ -132,14 +139,18 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 			if errors.Is(err, context.DeadlineExceeded) {
 				writeErr = fmt.Errorf("stream duration exceeded (max %s)", maxDur)
 			} else {
-				writeErr = err // context.Canceled:客户端断开/上层取消
+				canceled = true
+				writeErr = fmt.Errorf("request canceled") // context.Canceled:客户端断开/上层取消
 			}
 			break
 		}
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
 			if _, werr := w.Write(line); werr != nil {
-				writeErr = werr
+				// 写失败只可能是客户端侧问题(断开/代理关闭),与上游故障无关;
+				// 渠道已成功开始输出(Started),一律按"请求取消"处理,不记渠道失败
+				canceled = true
+				writeErr = fmt.Errorf("request canceled")
 				break
 			}
 			if fl, ok := w.(http.Flusher); ok {
@@ -162,7 +173,7 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 	}
 
 	if writeErr != nil {
-		return &StreamResult{Started: true, ErrorMessage: writeErr.Error(), Usage: usage, FirstResponseMs: firstMs}
+		return &StreamResult{Started: true, ClientCanceled: canceled, ErrorMessage: writeErr.Error(), Usage: usage, FirstResponseMs: firstMs}
 	}
 	return &StreamResult{Started: true, Usage: usage, FirstResponseMs: firstMs}
 }
@@ -215,8 +226,13 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 	// 收集各渠道失败原因,便于返回详细错误信息
 	var failReasons []string
 	lastCand := candidates[0] // 全部失败时返回最后尝试的渠道,供日志展示渠道名
+	var trail []TrailStep     // 渠道尝试链路(每个尝试过的渠道 + 结果)
 
 	for _, cand := range candidates {
+		// 客户端已断开/上层取消:立即停止,不重试不降级(避免把取消误判为渠道故障)
+		if ctx.Err() != nil {
+			return nil, &StreamResult{ClientCanceled: true, ErrorMessage: "client canceled"}, attempts, nil
+		}
 		target, err := BuildUpstreamURL(cand.BaseURL, clientPath)
 		if err != nil {
 			continue
@@ -227,16 +243,28 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 		}
 		res := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 		attempts++
+		trail = append(trail, streamTrailStep(cand, res))
+		if res.ClientCanceled {
+			res.Trail = trail
+			return cand, res, attempts, nil // 客户端取消:直接结束,不算渠道失败
+		}
 		if !res.ChannelFail {
 			_ = r.store.ClearChannelFailure(cand.ChannelID)
+			res.Trail = trail
 			return cand, res, attempts, nil // 已开始输出或成功
 		}
 		// 首包前失败:重试同一渠道一次
 		if r.cfg.RetrySameChannel {
 			res2 := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
 			attempts++
+			trail[len(trail)-1] = streamTrailStep(cand, res2) // 同渠道重试结果覆盖该渠道步骤
+			if res2.ClientCanceled {
+				res2.Trail = trail
+				return cand, res2, attempts, nil // 重试期间客户端取消
+			}
 			if !res2.ChannelFail {
 				_ = r.store.ClearChannelFailure(cand.ChannelID)
+				res2.Trail = trail
 				return cand, res2, attempts, nil
 			}
 			res = res2
@@ -250,8 +278,22 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 	if len(failReasons) > 0 {
 		detail = ":" + strings.Join(failReasons, "; ")
 	}
-	last := &StreamResult{ChannelFail: true, ErrorMessage: "all channels failed for stream request" + detail}
+	last := &StreamResult{ChannelFail: true, ErrorMessage: "all channels failed for stream request" + detail, Trail: trail}
 	return lastCand, last, attempts, nil
+}
+
+// streamTrailStep 将单次流式渠道尝试转为链路步骤:已开始输出视为成功,首包前失败记录原因
+func streamTrailStep(cand *ChannelCandidate, res *StreamResult) TrailStep {
+	s := TrailStep{ChannelID: cand.ChannelID, ChannelName: cand.ChannelName}
+	switch {
+	case res.ClientCanceled:
+		s.Reason = "client canceled"
+	case res.ChannelFail:
+		s.Reason = streamShortErr(res)
+	default:
+		s.OK = true
+	}
+	return s
 }
 
 // streamShortErr 生成流式渠道失败的简短描述

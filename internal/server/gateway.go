@@ -125,6 +125,18 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	fillUpstreamModel(logEntry, modelID, cand)
+	logEntry.ChannelTrail = trailJSON(res.Trail)
+	if res.ClientCanceled {
+		// 客户端断开/上层取消:请求已被客户端中止,不返回错误响应、不计渠道失败
+		logEntry.Status = "canceled"
+		logEntry.Error = res.ErrorMessage
+		if cand != nil {
+			logEntry.ChannelID = cand.ChannelID
+			logEntry.ChannelName = cand.ChannelName
+		}
+		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0, 0)
+		return
+	}
 	if res.BizError {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.Status)
@@ -196,6 +208,18 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 	if res == nil {
 		return
 	}
+	logEntry.ChannelTrail = trailJSON(res.Trail)
+	if res.ClientCanceled {
+		// 客户端断开/上层取消(首包前):不返回 502、不算渠道失败
+		logEntry.Status = "canceled"
+		logEntry.Error = res.ErrorMessage
+		if cand != nil {
+			logEntry.ChannelID = cand.ChannelID
+			logEntry.ChannelName = cand.ChannelName
+		}
+		h.writeLog(start, logEntry, time.Since(start).Milliseconds(), nil, 0, 0, 0, 0, 0)
+		return
+	}
 	if res.ChannelFail && !res.Started {
 		// 所有渠道首包前失败
 		writeJSON(w, http.StatusBadGateway, map[string]any{
@@ -220,7 +244,11 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 		status = "retry_success"
 	}
 	if res.ErrorMessage != "" {
-		status = "fail"
+		if res.ClientCanceled {
+			status = "canceled" // 客户端断开/上层取消,非渠道故障
+		} else {
+			status = "fail"
+		}
 	}
 	logEntry.Status = status
 	logEntry.Error = res.ErrorMessage

@@ -161,8 +161,8 @@ func (h *AdminHandler) handleModelByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /api/admin/models/sync — 同步某渠道的模型列表
-func (h *AdminHandler) handleModelSync(w http.ResponseWriter, r *http.Request) {
+// POST /api/admin/models/fetch — 拉取渠道上游模型列表(仅预览,不落库),供用户勾选后再同步
+func (h *AdminHandler) handleModelFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
@@ -181,12 +181,40 @@ func (h *AdminHandler) handleModelSync(w http.ResponseWriter, r *http.Request) {
 	}
 	models, err := fetchModels(c.BaseURL, c.APIKey, c.AuthHeader)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "同步失败: " + err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "获取失败: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": models, "total": len(models)})
+}
+
+// POST /api/admin/models/sync — 将用户勾选的模型同步到模型列表并关联渠道(只同步选中的,不全量导入)
+func (h *AdminHandler) handleModelSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		ChannelID int64    `json:"channel_id"`
+		Models    []string `json:"models"` // 用户勾选要同步的模型 ID
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		return
+	}
+	c, err := h.store.GetChannel(req.ChannelID)
+	if err != nil || c == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "channel not found"})
+		return
+	}
+	if len(req.Models) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请先获取模型并勾选要同步的模型"})
 		return
 	}
 	added := 0
-	existing := 0
-	for _, mid := range models {
+	for _, mid := range req.Models {
+		if mid == "" {
+			continue
+		}
 		mk, err := h.store.UpsertModel(mid, "")
 		if err != nil {
 			continue
@@ -196,8 +224,7 @@ func (h *AdminHandler) handleModelSync(w http.ResponseWriter, r *http.Request) {
 		}
 		added++
 	}
-	_ = existing
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": len(models), "added": added})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": len(req.Models), "added": added})
 }
 
 // fetchModels 调用渠道 ${baseURL}/models 拉取模型列表
