@@ -176,6 +176,10 @@ func (s *Store) migrate() error {
 	if err := ensureColumn(s.db, "request_logs", "channel_trail", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// 旧库迁移:request_logs 补充流式请求标记列(非流式请求不显示输出速度)
+	if err := ensureColumn(s.db, "request_logs", "is_stream", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	return s.migrateV1()
 }
 

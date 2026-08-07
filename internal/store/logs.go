@@ -7,14 +7,14 @@ import (
 	"gateway/internal/model"
 )
 
-const logCols = "id, request_time, request_id, channel_id, channel_name, model, upstream_model, status, latency_ms, first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response, channel_trail"
+const logCols = "id, request_time, request_id, channel_id, channel_name, model, upstream_model, status, is_stream, latency_ms, first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response, channel_trail"
 
 // InsertLog 插入一条请求日志
 func (s *Store) InsertLog(l *model.RequestLog) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO request_logs (request_time, request_id, channel_id, channel_name, model, upstream_model, status, latency_ms,
+	res, err := s.db.Exec(`INSERT INTO request_logs (request_time, request_id, channel_id, channel_name, model, upstream_model, status, is_stream, latency_ms,
 		first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response, channel_trail)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ts(l.RequestTime), l.RequestID, l.ChannelID, l.ChannelName, l.Model, l.UpstreamModel, l.Status, l.LatencyMs,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ts(l.RequestTime), l.RequestID, l.ChannelID, l.ChannelName, l.Model, l.UpstreamModel, l.Status, l.IsStream, l.LatencyMs,
 		l.FirstResponseMs, l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.CacheReadTokens, l.Cost, l.Error, l.SourceIP,
 		l.APIKeyName, l.PayloadRequest, l.PayloadResponse, l.ChannelTrail)
 	if err != nil {
@@ -84,7 +84,7 @@ func scanLog(row interface{ Scan(...any) error }) (*model.RequestLog, error) {
 	var l model.RequestLog
 	var rt int64
 	err := row.Scan(&l.ID, &rt, &l.RequestID, &l.ChannelID, &l.ChannelName, &l.Model, &l.UpstreamModel, &l.Status,
-		&l.LatencyMs, &l.FirstResponseMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.CacheReadTokens, &l.Cost, &l.Error, &l.SourceIP,
+		&l.IsStream, &l.LatencyMs, &l.FirstResponseMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.CacheReadTokens, &l.Cost, &l.Error, &l.SourceIP,
 		&l.APIKeyName, &l.PayloadRequest, &l.PayloadResponse, &l.ChannelTrail)
 	if err != nil {
 		return nil, err
@@ -103,5 +103,12 @@ func (s *Store) PruneLogs(days int) error {
 // ClearLogs 清空全部请求日志(不涉及统计聚合表)
 func (s *Store) ClearLogs() error {
 	_, err := s.db.Exec("DELETE FROM request_logs")
+	return err
+}
+
+// Vacuum 回收数据库文件空间:SQLite 的 DELETE 只标记删除,文件页不会自动释放;
+// VACUUM 重建数据库文件,把已删除行占用的空闲页真正归还给文件系统。
+func (s *Store) Vacuum() error {
+	_, err := s.db.Exec("VACUUM")
 	return err
 }

@@ -132,3 +132,103 @@ func TestStreamClientCancelNoFallback(t *testing.T) {
 	}
 	assertNoChannelFail(t, r, ch1, callsB, attempts)
 }
+
+// TestStreamClientCancelAfterStart 回归:流式已开始输出后客户端断开。
+// 客户端断开发生在 ReadBytes 阻塞等待上游数据期间:reqCtx 被取消 → Transport 关闭连接
+// → ReadBytes 返回 context.Canceled。此前该错误未识别为客户端取消,被记成 ChannelFail/失败,
+// 导致日志状态显示「失败」而非「客户端断开」(同错误文本两种状态)。修复后应判 ClientCanceled。
+func TestStreamClientCancelAfterStart(t *testing.T) {
+	cfg := config.Default()
+	cfg.UpstreamTimeout = 10 * time.Second   // TTFB 足够长
+	cfg.StreamMaxDuration = 30 * time.Second // 流式最长足够长
+	// 渠道 A:返回 200 后挂起,不再输出(ReadBytes 阻塞等待中);客户端断开后连接被关闭。
+	upA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		// 挂起:不写更多数据;客户端断开后 Transport 会关闭连接,本 handler 的 ctx 随之取消
+		<-r.Context().Done()
+	}))
+	defer upA.Close()
+
+	r := newTestRouter(t, cfg)
+	ch, err := r.store.CreateChannel(&model.Channel{
+		Name: "chan-a", BaseURL: upA.URL, APIKey: "sk-1", AuthHeader: "Authorization",
+		Priority: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	mID, err := r.store.UpsertModel("m-cancel-after", "cancel after start")
+	if err != nil {
+		t.Fatalf("UpsertModel: %v", err)
+	}
+	if err := r.store.AddChannelModel(ch, mID, ""); err != nil {
+		t.Fatalf("AddChannelModel: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// 自定义 ResponseWriter:网关侧 WriteHeader(Do 已返回、正阻塞 ReadBytes)时触发客户端断开,
+	// 确保稳定命中「ReadBytes 阻塞期间 reqCtx 取消」路径而非 Do 阶段取消。
+	started := make(chan struct{})
+	rec := &signalRecorder{rec: httptest.NewRecorder(), onHeader: func() {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+	}}
+	go func() {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Error("网关未在超时内开始写响应头")
+			return
+		}
+		cancel() // 已开始输出后客户端断开
+	}()
+
+	cand, res, attempts, err := r.HandleStream(ctx, rec, "m-cancel-after", "/v1/chat/completions", "", "", []byte(`{"model":"m-cancel-after","stream":true}`))
+	if err != nil {
+		t.Fatalf("HandleStream: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("res 为空")
+	}
+	if !res.ClientCanceled {
+		t.Fatalf("输出中途客户端断开应判 ClientCanceled,实际 %+v (ErrorMessage=%q)", res, res.ErrorMessage)
+	}
+	if res.ChannelFail {
+		t.Fatalf("客户端取消不得判为渠道失败: %+v", res)
+	}
+	if !res.Started {
+		t.Fatalf("已开始输出后取消应保持 Started=true: %+v", res)
+	}
+	if cand == nil || cand.ChannelName != "chan-a" {
+		t.Fatalf("应停在 chan-a,实际 %+v", cand)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+// signalRecorder 包装 httptest.ResponseRecorder,首次 WriteHeader 时回调(用于感知网关开始写响应)。
+type signalRecorder struct {
+	rec       *httptest.ResponseRecorder
+	onHeader  func()
+	headerSet bool
+}
+
+func (s *signalRecorder) Header() http.Header { return s.rec.Header() }
+func (s *signalRecorder) WriteHeader(code int) {
+	if !s.headerSet {
+		s.headerSet = true
+		s.onHeader()
+	}
+	s.rec.WriteHeader(code)
+}
+func (s *signalRecorder) Write(p []byte) (int, error) { return s.rec.Write(p) }
+func (s *signalRecorder) Flush()                      { s.rec.Flush() }

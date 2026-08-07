@@ -75,6 +75,7 @@ type RequestLog struct {
 	Model            string    `json:"model"`          // 客户端请求的模型
 	UpstreamModel    string    `json:"upstream_model"` // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
 	Status           string    `json:"status"` // success / fail / biz_error / retry_success / canceled
+	IsStream         bool      `json:"is_stream"`                 // 流式请求(SSE)标记;非流式请求不显示输出速度
 	LatencyMs        int64     `json:"latency_ms"`             // 请求发起 → 结束总耗时
 	FirstResponseMs  int64     `json:"first_response_ms"`      // 请求发起 → 收到首次响应(响应头)耗时,用于计算输出 token 速度
 	PromptTokens     int64     `json:"prompt_tokens"`

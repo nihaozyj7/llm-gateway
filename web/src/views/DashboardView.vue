@@ -92,16 +92,21 @@
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">状态</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="请求发起 → 结束的总耗时">耗时</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="P = Prompt: 输入(提示词)消耗的 tokens; C = Completion: 输出(生成内容)消耗的 tokens; T = Total: 输入+输出总计。蓝色数字为命中缓存的输入 tokens">TOKENS (P输入 / C输出 / T总计)</th>
-              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="输出 token 速度 = 输出 tokens(Completion) ÷ 输出耗时。输出耗时指从请求第一次被返回到结束的时间">Token 速度</th>
+              <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest" title="输出 token 速度 = 输出 tokens(Completion,含思考) ÷ 请求总耗时">Token 速度</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">预估成本</th>
               <th class="p-4 text-[10px] font-bold text-[#737373] uppercase tracking-widest">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-[#262626]">
             <template v-for="log in logs" :key="log.id">
-              <tr class="hover:bg-[#1a1a1a] transition-colors cursor-pointer" @click="toggleExpand(log.id)">
+              <tr class="hover:bg-[#1a1a1a] transition-colors cursor-pointer" @click="openDetail(log)">
                 <td class="p-4">
-                  <div class="font-mono text-xs">{{ fmtTimeShort(log.request_time) }}</div>
+                  <div class="flex items-center gap-2">
+                    <!-- 流式/非流式标记 -->
+                    <span v-if="log.is_stream" class="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20" title="流式请求(SSE)">流</span>
+                    <span v-else class="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#262626] text-[#a3a3a3] border border-[#404040]" title="非流式请求">非流</span>
+                  </div>
+                  <div class="font-mono text-xs mt-1">{{ fmtTimeShort(log.request_time) }}</div>
                   <div class="text-[10px] opacity-50 font-mono">{{ log.request_id }}</div>
                 </td>
                 <td class="p-4 font-mono text-xs text-[#a3a3a3]">{{ log.source_ip }}</td>
@@ -132,34 +137,7 @@
                 <td class="p-4 font-mono text-xs text-[#a3a3a3]" :title="tokenSpeedDetail(log)">{{ tokenSpeed(log) }}</td>
                 <td class="p-4 font-mono text-xs text-white uppercase">{{ fmtCost(log.cost) }}</td>
                 <td class="p-4">
-                  <button @click.stop="toggleExpand(log.id)" class="text-xs underline underline-offset-4 decoration-[#404040] hover:text-white">
-                    {{ expanded === log.id ? '收起' : '详情' }}
-                  </button>
-                </td>
-              </tr>
-              <!-- 展开行 -->
-              <tr v-if="expanded === log.id" class="bg-[#0d0d0d]">
-                <td colspan="9" class="p-8">
-                  <div class="grid md:grid-cols-2 gap-8">
-                    <div>
-                      <div class="flex items-center justify-between mb-2">
-                        <span class="text-[10px] uppercase tracking-widest text-[#737373] font-bold">Request Payload (JSON)</span>
-                        <button @click="copy(log.payload_request)" class="text-[10px] text-[#a3a3a3] hover:text-white">复制</button>
-                      </div>
-                      <div class="json-block max-h-72 overflow-y-auto">{{ prettyJSON(log.payload_request) }}</div>
-                    </div>
-                    <div>
-                      <div class="flex items-center justify-between mb-2">
-                        <span class="text-[10px] uppercase tracking-widest text-[#737373] font-bold">Response Payload (JSON)</span>
-                        <button @click="copy(log.payload_response)" class="text-[10px] text-[#a3a3a3] hover:text-white">复制</button>
-                      </div>
-                      <div class="json-block max-h-72 overflow-y-auto">{{ prettyJSON(log.payload_response) }}</div>
-                    </div>
-                  </div>
-                  <div v-if="log.error" class="mt-4 text-xs text-red-500 bg-red-500/5 border border-red-500/20 rounded p-3 break-all">
-                    <div class="font-bold mb-1">错误信息</div>
-                    <div class="whitespace-pre-line">{{ errorText(log) }}</div>
-                  </div>
+                  <button @click.stop="openDetail(log)" class="text-xs underline underline-offset-4 decoration-[#404040] hover:text-white">详情</button>
                 </td>
               </tr>
             </template>
@@ -185,6 +163,72 @@
             class="w-8 h-8 flex items-center justify-center rounded border border-[#262626] bg-[#1a1a1a] text-[#a3a3a3] hover:text-white disabled:opacity-30">
             <Icon icon="lucide:chevron-right" />
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 日志详情弹出层 -->
+    <div v-if="detail" class="fixed inset-0 z-50 flex items-center justify-center p-6" @click.self="detail = null">
+      <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+      <div class="relative w-full max-w-4xl max-h-[88vh] flex flex-col bg-[#121212] border border-[#262626] rounded-xl shadow-2xl overflow-hidden">
+        <!-- 弹层头部 -->
+        <div class="flex items-center justify-between px-6 py-4 border-b border-[#262626] bg-[#0e0e0e] shrink-0">
+          <div class="flex items-center gap-3 min-w-0">
+            <span v-if="detail.is_stream" class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">流</span>
+            <span v-else class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#262626] text-[#a3a3a3] border border-[#404040]">非流</span>
+            <span class="text-sm font-bold font-mono">{{ detail.request_id }}</span>
+            <StatusBadge :text="badgeText(detail.status)" :type="badgeType(detail.status)" />
+          </div>
+          <div class="flex items-center gap-3 shrink-0">
+            <span class="text-[10px] text-[#737373] font-mono">{{ fmtTimeShort(detail.request_time) }} · {{ detail.source_ip }}</span>
+            <button @click="detail = null" class="text-[#737373] hover:text-white"><Icon icon="lucide:x" /></button>
+          </div>
+        </div>
+        <!-- 弹层主体:元信息 + 请求/响应体 -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-5">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div class="bg-[#0d0d0d] border border-[#262626] rounded p-3">
+              <div class="text-[10px] uppercase tracking-widest text-[#737373] font-bold mb-1">渠道</div>
+              <div class="font-mono break-all">{{ detail.channel_name || '--' }}</div>
+            </div>
+            <div class="bg-[#0d0d0d] border border-[#262626] rounded p-3">
+              <div class="text-[10px] uppercase tracking-widest text-[#737373] font-bold mb-1">模型</div>
+              <div class="font-mono break-all">
+                <template v-if="detail.upstream_model && detail.upstream_model !== detail.model">{{ detail.model }} → {{ detail.upstream_model }}</template>
+                <template v-else>{{ detail.model }}</template>
+              </div>
+            </div>
+            <div class="bg-[#0d0d0d] border border-[#262626] rounded p-3">
+              <div class="text-[10px] uppercase tracking-widest text-[#737373] font-bold mb-1">耗时</div>
+              <div class="font-mono">{{ (detail.latency_ms / 1000).toFixed(2) }}s<template v-if="detail.first_response_ms">(首包 {{ (detail.first_response_ms / 1000).toFixed(2) }}s)</template></div>
+            </div>
+            <div class="bg-[#0d0d0d] border border-[#262626] rounded p-3">
+              <div class="text-[10px] uppercase tracking-widest text-[#737373] font-bold mb-1">TOKENS</div>
+              <div class="font-mono">{{ fmtNum(detail.prompt_tokens) }} / {{ fmtNum(detail.completion_tokens) }} / {{ fmtNum(detail.total_tokens) }}</div>
+            </div>
+          </div>
+
+          <div v-if="detail.error" class="text-xs text-red-500 bg-red-500/5 border border-red-500/20 rounded p-3 break-all">
+            <div class="font-bold mb-1">错误信息</div>
+            <div class="whitespace-pre-line">{{ errorText(detail) }}</div>
+          </div>
+
+          <!-- 请求体(格式化) -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] uppercase tracking-widest text-[#737373] font-bold">Request Payload (JSON)</span>
+              <button @click="copy(detail.payload_request)" class="text-[10px] text-[#a3a3a3] hover:text-white">复制</button>
+            </div>
+            <pre class="json-block max-h-80 overflow-y-auto">{{ prettyJSON(detail.payload_request) }}</pre>
+          </div>
+          <!-- 响应体 -->
+          <div v-if="detail.payload_response">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] uppercase tracking-widest text-[#737373] font-bold">Response Payload (JSON)</span>
+              <button @click="copy(detail.payload_response)" class="text-[10px] text-[#a3a3a3] hover:text-white">复制</button>
+            </div>
+            <pre class="json-block max-h-80 overflow-y-auto">{{ prettyJSON(detail.payload_response) }}</pre>
+          </div>
         </div>
       </div>
     </div>
@@ -226,7 +270,7 @@ const keys = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 10
-const expanded = ref(null)
+const detail = ref(null) // 日志详情弹出层当前展示的日志
 const filters = ref({ channel_id: '', model: '', status: '', key_name: '', keyword: '' })
 
 const today = new Date().toLocaleDateString('zh-CN')
@@ -296,20 +340,20 @@ function trailCls(t) {
   if (t.reason === 'client canceled' || t.reason === 'request canceled') return 'text-gray-500'
   return 'text-red-500'
 }
-function toggleExpand(id) {
-  expanded.value = expanded.value === id ? null : id
+function openDetail(log) {
+  detail.value = log
 }
-// 输出 token 速度:输出 tokens ÷ 输出耗时(从首次响应到结束,单位:tok/s)
+// 输出 token 速度:输出 tokens(usage,含思考过程)÷ 请求总耗时(单位:tok/s)。
+// 注意:不能减 first_response_ms——非流式请求首包与完成几乎同时,分母趋近 0 会算出天文数字;
+// 且 usage 是模型结束后返回的本轮总量,直接除以总耗时即为平均输出速度。
+// 非流式请求一次性返回,输出速度无意义,不显示。
 function tokenSpeed(log) {
-  if (!log || !log.completion_tokens || log.first_response_ms <= 0 || log.latency_ms <= 0) return '--'
-  const outputMs = log.latency_ms - log.first_response_ms
-  if (outputMs <= 0) return '--'
-  return fmtNum(Math.round((log.completion_tokens * 1000) / outputMs)) + ' tok/s'
+  if (!log || !log.is_stream || !log.completion_tokens || log.latency_ms <= 0) return '--'
+  return fmtNum(Math.round((log.completion_tokens * 1000) / log.latency_ms)) + ' tok/s'
 }
 function tokenSpeedDetail(log) {
-  if (!log || log.first_response_ms <= 0) return ''
-  const outputMs = Math.max(0, log.latency_ms - log.first_response_ms)
-  return `输出 ${fmtNum(log.completion_tokens)} tokens ÷ ${outputMs}ms ≈ ${tokenSpeed(log)}`
+  if (!log || log.latency_ms <= 0) return ''
+  return `输出 ${fmtNum(log.completion_tokens)} tokens ÷ ${log.latency_ms}ms ≈ ${tokenSpeed(log)}`
 }
 function prettyJSON(s) {
   if (!s) return '--'

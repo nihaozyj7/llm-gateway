@@ -67,6 +67,11 @@ func (h *AdminHandler) handleClearLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	// 清除后执行 VACUUM:SQLite 的 DELETE 不会释放文件页,需重建数据库才能让文件变小
+	if err := h.store.Vacuum(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

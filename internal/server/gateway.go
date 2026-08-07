@@ -103,6 +103,7 @@ func (h *GatewayHandler) handleV1(w http.ResponseWriter, r *http.Request) {
 		Model:      modelID,
 		SourceIP:   sourceIP,
 		PayloadReq: string(body),
+		IsStream:   isStream,
 	}
 
 	if isStream {

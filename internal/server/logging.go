@@ -17,6 +17,7 @@ type storeLogEntry struct {
 	Model           string
 	UpstreamModel   string // 实际转发给上游的模型(渠道映射后,未映射时与 Model 相同)
 	Status          string
+	IsStream        bool   // 流式请求(SSE)标记
 	Error           string
 	SourceIP        string
 	PayloadReq      string
@@ -61,6 +62,7 @@ func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs i
 		Model:            e.Model,
 		UpstreamModel:    e.UpstreamModel,
 		Status:           e.Status,
+		IsStream:         e.IsStream,
 		LatencyMs:        latencyMs,
 		FirstResponseMs:  e.FirstResponseMs,
 		PromptTokens:     pt,

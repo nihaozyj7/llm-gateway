@@ -166,7 +166,15 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 		}
 		if err != nil {
 			if err != io.EOF {
-				writeErr = err
+				// 客户端断开/上层取消(reqCtx 被取消)时,底层读会返回 context.Canceled
+				// (连接被 Transport 关闭);须归为客户端取消而非上游故障,否则日志误记「失败」。
+				// 注:循环顶部已有 reqCtx.Err() 检查,但 ReadBytes 阻塞期间取消不会经过它。
+				if errors.Is(err, context.Canceled) || errors.Is(reqCtx.Err(), context.Canceled) {
+					canceled = true
+					writeErr = fmt.Errorf("request canceled")
+				} else {
+					writeErr = err
+				}
 			}
 			break
 		}
