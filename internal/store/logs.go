@@ -9,7 +9,7 @@ import (
 
 const logCols = "id, request_time, request_id, channel_id, channel_name, model, upstream_model, status, is_stream, latency_ms, first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response, channel_trail"
 
-// InsertLog 插入一条请求日志
+// InsertLog 插入一条请求日志(一次性写入,旧逻辑)
 func (s *Store) InsertLog(l *model.RequestLog) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO request_logs (request_time, request_id, channel_id, channel_name, model, upstream_model, status, is_stream, latency_ms,
 		first_response_ms, prompt_tokens, completion_tokens, total_tokens, cache_read_tokens, cost, error, source_ip, api_key_name, payload_request, payload_response, channel_trail)
@@ -21,6 +21,50 @@ func (s *Store) InsertLog(l *model.RequestLog) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// InsertPendingLog 请求到达时插入一条「等待中」日志并返回其 id;
+// 请求结束时用 UpdateLogFinal 更新同一条记录,实现实时状态流转
+// (等待中 → 传输中(流式首包) → 成功/失败/客户端断开/业务错误)。
+// 字段:仅插入请求阶段已知的信息,其余待最终更新。
+func (s *Store) InsertPendingLog(l *model.RequestLog) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO request_logs (request_time, request_id, api_key_name, model, source_ip, payload_request, is_stream, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+		ts(l.RequestTime), l.RequestID, l.APIKeyName, l.Model, l.SourceIP, l.PayloadRequest, l.IsStream)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateLogStatus 更新进行中日志的状态(流式请求收到首包后置为 streaming)
+func (s *Store) UpdateLogStatus(id int64, status string) error {
+	_, err := s.db.Exec("UPDATE request_logs SET status = ? WHERE id = ?", status, id)
+	return err
+}
+
+// UpdateLogFinal 请求结束时用最终结果更新同一条日志记录(由 InsertPendingLog 创建的 id)。
+// id <= 0 时跳过(未成功创建等待日志时保持旧行为,直接插入完整记录)。
+func (s *Store) UpdateLogFinal(l *model.RequestLog) error {
+	if l.ID <= 0 {
+		_, err := s.InsertLog(l)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE request_logs SET
+		channel_id = ?, channel_name = ?, model = ?, upstream_model = ?, status = ?, latency_ms = ?,
+		first_response_ms = ?, prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, cache_read_tokens = ?,
+		cost = ?, error = ?, payload_request = ?, payload_response = ?, channel_trail = ? WHERE id = ?`,
+		l.ChannelID, l.ChannelName, l.Model, l.UpstreamModel, l.Status, l.LatencyMs,
+		l.FirstResponseMs, l.PromptTokens, l.CompletionTokens, l.TotalTokens, l.CacheReadTokens,
+		l.Cost, l.Error, l.PayloadRequest, l.PayloadResponse, l.ChannelTrail, l.ID)
+	return err
+}
+
+// FinishStaleLogs 网关启动时把上次进程残留的进行中日志(等待中/传输中)标记为失败,
+// 避免异常退出(断电/强杀)后前端长期悬挂在中间状态。
+func (s *Store) FinishStaleLogs() error {
+	_, err := s.db.Exec(`UPDATE request_logs SET status = 'fail', error = '进程中断,请求未完成' WHERE status IN ('pending', 'streaming')`)
+	return err
 }
 
 // ListLogs 分页查询日志(支持过滤),返回日志与总数

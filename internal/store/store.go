@@ -28,6 +28,8 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// 上次进程异常退出时遗留的「等待中/传输中」日志标记为失败,避免前端悬挂中间状态
+	_ = s.FinishStaleLogs()
 	return s, nil
 }
 

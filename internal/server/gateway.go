@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gateway/internal/config"
+	"gateway/internal/model"
 	"gateway/internal/route"
 	"gateway/internal/store"
 )
@@ -105,6 +106,18 @@ func (h *GatewayHandler) handleV1(w http.ResponseWriter, r *http.Request) {
 		PayloadReq: string(body),
 		IsStream:   isStream,
 	}
+	// 请求到达:先插入「等待中」日志,请求结束时更新同一条记录,实现实时状态流转
+	if id, err := h.store.InsertPendingLog(&model.RequestLog{
+		RequestTime:    start,
+		RequestID:      requestID,
+		APIKeyName:     ak.Name,
+		Model:          modelID,
+		SourceIP:       sourceIP,
+		PayloadRequest: string(body),
+		IsStream:       isStream,
+	}); err == nil {
+		logEntry.LogID = id
+	}
 
 	if isStream {
 		h.handleStreamRequest(w, r, body, modelID, clientPath, start, logEntry)
@@ -122,7 +135,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		logEntry.Status = "fail"
 		logEntry.Error = err.Error()
 		fillUpstreamModel(logEntry, modelID, nil)
-		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0)
 		return
 	}
 	fillUpstreamModel(logEntry, modelID, cand)
@@ -135,7 +148,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 			logEntry.ChannelID = cand.ChannelID
 			logEntry.ChannelName = cand.ChannelName
 		}
-		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0)
 		return
 	}
 	if res.BizError {
@@ -147,7 +160,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 		logEntry.ChannelID = cand.ChannelID
 		logEntry.ChannelName = cand.ChannelName
 		logEntry.FirstResponseMs = res.FirstResponseMs
-		h.writeLog(start, logEntry, res.LatencyMs, res.Body, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, res.LatencyMs, res.Body, 0, 0, 0, 0)
 		return
 	}
 	if res.ChannelFail {
@@ -167,7 +180,7 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 			logEntry.ChannelName = cand.ChannelName
 		}
 		logEntry.FirstResponseMs = res.FirstResponseMs
-		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, res.LatencyMs, nil, 0, 0, 0, 0)
 		return
 	}
 
@@ -188,11 +201,16 @@ func (h *GatewayHandler) handleJSONRequest(w http.ResponseWriter, r *http.Reques
 	logEntry.ChannelID = cand.ChannelID
 	logEntry.ChannelName = cand.ChannelName
 	logEntry.FirstResponseMs = res.FirstResponseMs
-	h.writeLog(start, logEntry, res.LatencyMs, res.Body, pt, ct, cache, tt, res.Status)
+	h.writeLog(start, logEntry, res.LatencyMs, res.Body, pt, ct, cache, tt)
 }
 
 func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Request, body []byte, modelID, clientPath string, start time.Time, logEntry *storeLogEntry) {
-	cand, res, attempts, err := h.router.HandleStream(r.Context(), w, modelID, clientPath, "", "", body)
+	cand, res, attempts, err := h.router.HandleStream(r.Context(), w, modelID, clientPath, "", "", body, func() {
+		// 流式首包已送达客户端:日志状态 等待中 → 传输中
+		if logEntry.LogID > 0 {
+			_ = h.store.UpdateLogStatus(logEntry.LogID, "streaming")
+		}
+	})
 	if err != nil {
 		if !streamStarted(w) {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -202,7 +220,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 		logEntry.Status = "fail"
 		logEntry.Error = err.Error()
 		fillUpstreamModel(logEntry, modelID, nil)
-		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0)
 		return
 	}
 	fillUpstreamModel(logEntry, modelID, cand)
@@ -218,7 +236,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 			logEntry.ChannelID = cand.ChannelID
 			logEntry.ChannelName = cand.ChannelName
 		}
-		h.writeLog(start, logEntry, time.Since(start).Milliseconds(), nil, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, time.Since(start).Milliseconds(), nil, 0, 0, 0, 0)
 		return
 	}
 	if res.ChannelFail && !res.Started {
@@ -232,7 +250,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 			logEntry.ChannelID = cand.ChannelID
 			logEntry.ChannelName = cand.ChannelName
 		}
-		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0, 0)
+		h.writeLog(start, logEntry, 0, nil, 0, 0, 0, 0)
 		return
 	}
 	// 已开始流式输出(成功或中途断开)
@@ -259,7 +277,7 @@ func (h *GatewayHandler) handleStreamRequest(w http.ResponseWriter, r *http.Requ
 	}
 	logEntry.FirstResponseMs = res.FirstResponseMs
 	latency := time.Since(start).Milliseconds()
-	h.writeLog(start, logEntry, latency, nil, pt, ct, cache, tt, 200)
+	h.writeLog(start, logEntry, latency, nil, pt, ct, cache, tt)
 }
 
 // handleListModels 返回聚合模型列表(OpenAI 格式)

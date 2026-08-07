@@ -63,6 +63,8 @@
             <option value="fail">失败</option>
             <option value="biz_error">业务错误</option>
             <option value="canceled">客户端断开</option>
+            <option value="pending">等待中</option>
+            <option value="streaming">传输中</option>
           </select>
         </div>
         <div>
@@ -129,7 +131,7 @@
                   </div>
                 </td>
                 <td class="p-4"><StatusBadge :text="badgeText(log.status)" :type="badgeType(log.status)" /></td>
-                <td class="p-4 font-mono text-xs">{{ (log.latency_ms / 1000).toFixed(2) }}s</td>
+                <td class="p-4 font-mono text-xs">{{ latencyText(log) }}</td>
                 <td class="p-4 font-mono text-xs">
                   {{ fmtNum(log.prompt_tokens) }} / {{ fmtNum(log.completion_tokens) }} / <span class="text-white">{{ fmtNum(log.total_tokens) }}</span>
                   <span v-if="log.cache_read_tokens" class="text-[10px] text-blue-400" title="命中缓存读取的 tokens"> · Cache {{ fmtNum(log.cache_read_tokens) }}</span>
@@ -200,7 +202,7 @@
             </div>
             <div class="bg-[#0d0d0d] border border-[#262626] rounded p-3">
               <div class="text-[10px] uppercase tracking-widest text-[#737373] font-bold mb-1">耗时</div>
-              <div class="font-mono">{{ (detail.latency_ms / 1000).toFixed(2) }}s<template v-if="detail.first_response_ms">(首包 {{ (detail.first_response_ms / 1000).toFixed(2) }}s)</template></div>
+              <div class="font-mono">{{ latencyText(detail) }}<template v-if="detail.first_response_ms && detail.status !== 'pending' && detail.status !== 'streaming'">(首包 {{ (detail.first_response_ms / 1000).toFixed(2) }}s)</template></div>
             </div>
             <div class="bg-[#0d0d0d] border border-[#262626] rounded p-3">
               <div class="text-[10px] uppercase tracking-widest text-[#737373] font-bold mb-1">TOKENS</div>
@@ -255,11 +257,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { api, fmtNum, fmtTokens, fmtCost, fmtTimeShort } from '../api'
 import StatCard from '../components/StatCard.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+
+// 日志自动刷新间隔(毫秒):实时推送效果,无需手动点「刷新」
+const REFRESH_INTERVAL = 2000
+let refreshTimer = null
 
 const summary = ref({ request_count: 0, success_count: 0, fail_count: 0, total_tokens: 0, cost: 0 })
 const cooldown = ref([])
@@ -281,7 +287,7 @@ const successRate = computed(() => {
 })
 
 function badgeText(s) {
-  const map = { success: '成功', retry_success: '重试成功', fail: '失败', biz_error: '业务错误', canceled: '客户端断开' }
+  const map = { success: '成功', retry_success: '重试成功', fail: '失败', biz_error: '业务错误', canceled: '客户端断开', pending: '等待中', streaming: '传输中' }
   return map[s] || s
 }
 // 错误信息中文化:解析后端 error 字符串,输出中文可读提示
@@ -322,6 +328,8 @@ function badgeType(s) {
   if (s === 'retry_success') return 'info'
   if (s === 'biz_error') return 'warning'
   if (s === 'canceled') return 'info'
+  if (s === 'pending') return 'warning'
+  if (s === 'streaming') return 'info'
   return 'error'
 }
 // 渠道尝试链路:解析 channel_trail JSON;旧日志无该字段时返回空数组(前端回退旧显示)
@@ -354,6 +362,13 @@ function tokenSpeed(log) {
 function tokenSpeedDetail(log) {
   if (!log || log.latency_ms <= 0) return ''
   return `输出 ${fmtNum(log.completion_tokens)} tokens ÷ ${log.latency_ms}ms ≈ ${tokenSpeed(log)}`
+}
+// 耗时列:等待中/传输中无最终耗时,展示占位文本
+function latencyText(log) {
+  if (!log) return '--'
+  if (log.status === 'pending') return '--'
+  if (log.status === 'streaming') return '进行中'
+  return (log.latency_ms / 1000).toFixed(2) + 's'
 }
 function prettyJSON(s) {
   if (!s) return '--'
@@ -416,5 +431,12 @@ async function recover(id) {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  // 实时日志:进入页面后每 2 秒自动拉取最新日志(等待中/传输中状态随之流转)
+  refreshTimer = setInterval(loadLogs, REFRESH_INTERVAL)
+})
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+})
 </script>

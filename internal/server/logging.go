@@ -10,6 +10,7 @@ import (
 
 // storeLogEntry 日志记录中间态
 type storeLogEntry struct {
+	LogID           int64  // InsertPendingLog 返回的日志行 id(0 = 未创建成功)
 	RequestID       string
 	KeyName         string // 调用所使用的 API Key 名称
 	ChannelID       int64
@@ -37,9 +38,10 @@ func trailJSON(t []route.TrailStep) string {
 	return string(b)
 }
 
-// writeLog 落库日志 + 更新统计,并按模型价格计算成本
+// writeLog 请求结束时落库日志 + 更新统计,并按模型价格计算成本。
+// 请求开始时已由 InsertPendingLog 创建「等待中」记录,这里按 id 更新为最终状态;
 // pt/ct/cache/tt 分别为 prompt/completion/缓存读取/total tokens;价格为元/百万 token
-func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs int64, respBody []byte, pt, ct, cache, tt int64, httpStatus int) {
+func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs int64, respBody []byte, pt, ct, cache, tt int64) {
 	// 计算成本:按模型价格
 	var cost float64
 	m, _ := h.store.GetModelByID(e.Model)
@@ -54,6 +56,7 @@ func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs i
 		e.PayloadReq = e.PayloadReq[:64*1024]
 	}
 	l := &model.RequestLog{
+		ID:               e.LogID,
 		RequestTime:      start,
 		RequestID:        e.RequestID,
 		APIKeyName:       e.KeyName,
@@ -76,7 +79,7 @@ func (h *GatewayHandler) writeLog(start time.Time, e *storeLogEntry, latencyMs i
 		PayloadResponse:  payloadResp,
 		ChannelTrail:     e.ChannelTrail,
 	}
-	if _, err := h.store.InsertLog(l); err == nil {
+	if err := h.store.UpdateLogFinal(l); err == nil {
 		_ = h.store.RecordStat(l)
 	}
 }

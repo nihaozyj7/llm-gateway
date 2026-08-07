@@ -6,7 +6,7 @@ OpenAI 兼容的轻量级多渠道 LLM 转发网关:密钥轮询回退代理(同
 - 栈:Go 1.26(仅依赖 `x/crypto`、`modernc.org/sqlite`,免 CGO)+ Vue3/Vite/Tailwind/ECharts 管理界面
 - 入口:`cmd/gateway/main.go`(装配 store → router → handlers,embed `web/dist` 前端)
 - 数据:`config.json` + SQLite(`.data/gateway.db`,WAL)
-- 版本号:`cmd/gateway/main.go` 中 `var version = "0.5.0"`
+- 版本号:`cmd/gateway/main.go` 中 `var version = "0.8.0"`
 
 ## Commands
 - 完整构建(前端 + 二进制,Windows 默认):`./build.ps1`;加 `-Linux` 交叉编译 Linux,`-Windows -Linux` 两者都要

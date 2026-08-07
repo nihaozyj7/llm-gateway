@@ -117,7 +117,7 @@ func TestStreamClientCancelNoFallback(t *testing.T) {
 	time.AfterFunc(100*time.Millisecond, cancel)
 
 	rec := httptest.NewRecorder()
-	cand, res, attempts, err := r.HandleStream(ctx, rec, "m-cancel", "/v1/chat/completions", "", "", []byte(`{"model":"m-cancel","stream":true}`))
+	cand, res, attempts, err := r.HandleStream(ctx, rec, "m-cancel", "/v1/chat/completions", "", "", []byte(`{"model":"m-cancel","stream":true}`), nil)
 	if err != nil {
 		t.Fatalf("HandleStream: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestStreamClientCancelAfterStart(t *testing.T) {
 		cancel() // 已开始输出后客户端断开
 	}()
 
-	cand, res, attempts, err := r.HandleStream(ctx, rec, "m-cancel-after", "/v1/chat/completions", "", "", []byte(`{"model":"m-cancel-after","stream":true}`))
+	cand, res, attempts, err := r.HandleStream(ctx, rec, "m-cancel-after", "/v1/chat/completions", "", "", []byte(`{"model":"m-cancel-after","stream":true}`), nil)
 	if err != nil {
 		t.Fatalf("HandleStream: %v", err)
 	}

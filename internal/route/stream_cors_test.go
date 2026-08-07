@@ -28,7 +28,7 @@ func TestStreamStripsUpstreamCORSHeaders(t *testing.T) {
 
 	r := newTestRouter(t, config.Default())
 	rec := httptest.NewRecorder()
-	res := r.doStreamOnce(context.Background(), rec, up.URL+"/chat/completions", []byte(`{"model":"m","stream":true}`), "sk-test", "", 0)
+	res := r.doStreamOnce(context.Background(), rec, up.URL+"/chat/completions", []byte(`{"model":"m","stream":true}`), "sk-test", "", 0, nil)
 
 	if res.ChannelFail || res.ErrorMessage != "" {
 		t.Fatalf("stream failed: %v", res.ErrorMessage)

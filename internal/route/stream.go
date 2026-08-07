@@ -33,7 +33,8 @@ type StreamResult struct {
 //     指「整个流式请求允许的最长时长」,超过后即使仍在输出也判定超时。
 //
 // timeout 为渠道级超时;首包前失败返回 ChannelFail=true(调用方可降级重试);已开始输出则不再重试
-func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target string, body []byte, apiKey, authHeader string, timeout time.Duration) *StreamResult {
+// onStarted 在首包(响应头)成功送达客户端后调用一次,用于日志状态流转(等待中 → 传输中)。
+func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target string, body []byte, apiKey, authHeader string, timeout time.Duration, onStarted func()) *StreamResult {
 	start := time.Now()
 	ttfb := timeout
 	if ttfb <= 0 {
@@ -125,6 +126,10 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
+	// 首包已送达客户端:触发状态回调(如日志 等待中 → 传输中)
+	if onStarted != nil {
+		onStarted()
+	}
 
 	// 逐行透传,扫描 data: 块截获 usage
 	br := bufio.NewReader(resp.Body)
@@ -146,6 +151,25 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 		}
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
+			trimmed := strings.TrimSpace(string(line))
+			// 收集 data: 行用于 usage 解析(只保留最近若干行,防止无限增长)
+			if strings.HasPrefix(trimmed, "data:") {
+				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+				if payload == "[DONE]" {
+					// 正常结束标记:透传该行后立即终止转发。
+					// 大量客户端在收到 [DONE] 后马上关闭连接,而部分上游在 DONE 之后
+					// 仍会发送尾部数据(空行等);若继续透传,写入已断开的连接会失败,
+					// 被误判为「客户端断开」。因此 [DONE] 之后再无任何转发与错误判定。
+					_, _ = w.Write(line)
+					if fl, ok := w.(http.Flusher); ok {
+						fl.Flush()
+					}
+					return &StreamResult{Started: true, Usage: usage, FirstResponseMs: firstMs}
+				}
+				if u := parseStreamUsage(trimmed); u != nil {
+					usage = u
+				}
+			}
 			if _, werr := w.Write(line); werr != nil {
 				// 写失败只可能是客户端侧问题(断开/代理关闭),与上游故障无关;
 				// 渠道已成功开始输出(Started),一律按"请求取消"处理,不记渠道失败
@@ -155,13 +179,6 @@ func (r *Router) doStreamOnce(ctx context.Context, w http.ResponseWriter, target
 			}
 			if fl, ok := w.(http.Flusher); ok {
 				fl.Flush()
-			}
-			// 收集 data: 行用于 usage 解析(只保留最近若干行,防止无限增长)
-			trimmed := strings.TrimSpace(string(line))
-			if strings.HasPrefix(trimmed, "data:") {
-				if u := parseStreamUsage(trimmed); u != nil {
-					usage = u
-				}
 			}
 		}
 		if err != nil {
@@ -221,7 +238,8 @@ func parseStreamUsage(dataLine string) *Usage {
 }
 
 // HandleStream 主入口:流式路由 + 重试 + 降级(仅首包前失败可降级)
-func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelID, clientPath, apiKey, authHeader string, body []byte) (*ChannelCandidate, *StreamResult, int, error) {
+// onStarted 在首包送达客户端后触发一次(用于日志状态流转);可为 nil
+func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelID, clientPath, apiKey, authHeader string, body []byte, onStarted func()) (*ChannelCandidate, *StreamResult, int, error) {
 	candidates, err := r.PickChannels(ctx, modelID)
 	if err != nil {
 		return nil, nil, 0, err
@@ -249,7 +267,7 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 		if cand.UpstreamModelName != "" {
 			sendBody = ApplyModelMapping(body, cand.UpstreamModelName)
 		}
-		res := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
+		res := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout, onStarted)
 		attempts++
 		trail = append(trail, streamTrailStep(cand, res))
 		if res.ClientCanceled {
@@ -263,7 +281,7 @@ func (r *Router) HandleStream(ctx context.Context, w http.ResponseWriter, modelI
 		}
 		// 首包前失败:重试同一渠道一次
 		if r.cfg.RetrySameChannel {
-			res2 := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout)
+			res2 := r.doStreamOnce(ctx, w, target, sendBody, cand.APIKey, authHeader, cand.Timeout, onStarted)
 			attempts++
 			trail[len(trail)-1] = streamTrailStep(cand, res2) // 同渠道重试结果覆盖该渠道步骤
 			if res2.ClientCanceled {
